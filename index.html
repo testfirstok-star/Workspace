@@ -273,7 +273,7 @@ function WorkPage() {
 
 // ============ HEALTH ============
 function HealthPage() {
-  const [data, setData] = useState(() => { const d = load("health-data", { water: {}, food: {} }); return { water: d.water || {}, food: d.food || {} }; });
+  const [data, setData] = useState(() => { const d = load("health-data", { water: {}, food: {}, glucose: {} }); return { water: d.water || {}, food: d.food || {}, glucose: d.glucose || {} }; });
   const [foodName, setFoodName] = useState("");
   const [foodCal, setFoodCal] = useState("");
   const [viewDate, setViewDate] = useState(todayISO());
@@ -285,6 +285,7 @@ function HealthPage() {
   const waterVal = data.water[viewDate] || 0;
   const foodVal = data.food[viewDate] || [];
   const calsVal = foodVal.reduce((s, f) => s + f.cal, 0);
+  const glucoseVal = data.glucose[viewDate] || {};
 
   const addWater = (delta) => setData({ ...data, water: { ...data.water, [viewDate]: Math.max(0, waterVal + delta) } });
   const addFood = () => {
@@ -293,6 +294,12 @@ function HealthPage() {
     setFoodName(""); setFoodCal("");
   };
   const removeFood = (id) => setData({ ...data, food: { ...data.food, [viewDate]: foodVal.filter((f) => f.id !== id) } });
+  const setGlucose = (field, val) => setData({ ...data, glucose: { ...data.glucose, [viewDate]: { ...glucoseVal, [field]: val === "" ? undefined : Number(val) } } });
+  const deleteGlucoseDay = (date) => { const g = { ...data.glucose }; delete g[date]; setData({ ...data, glucose: g }); };
+  const glucoseDates = Object.keys(data.glucose).filter((d) => {
+    const v = data.glucose[d];
+    return v && (v.morning != null || v.afterLunch != null || v.afterDinner != null);
+  }).sort();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
@@ -350,6 +357,127 @@ function HealthPage() {
           ))}
         </div>
       </Card>
+
+      <Card>
+        <SectionLabel>Glucose{!isToday ? ` · ${fmtDate(viewDate)}` : ""}</SectionLabel>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+              Morning
+              {glucoseVal.morning != null && <Icon name="check" size={11} color={C.green} />}
+            </div>
+            <TextInput type="number" value={glucoseVal.morning ?? ""} onChange={(e) => setGlucose("morning", e.target.value)} placeholder="mg/dL" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+              Post-Lunch
+              {glucoseVal.afterLunch != null && <Icon name="check" size={11} color={C.green} />}
+            </div>
+            <TextInput type="number" value={glucoseVal.afterLunch ?? ""} onChange={(e) => setGlucose("afterLunch", e.target.value)} placeholder="mg/dL" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+              Post-Dinner
+              {glucoseVal.afterDinner != null && <Icon name="check" size={11} color={C.green} />}
+            </div>
+            <TextInput type="number" value={glucoseVal.afterDinner ?? ""} onChange={(e) => setGlucose("afterDinner", e.target.value)} placeholder="mg/dL" />
+          </div>
+        </div>
+        {glucoseDates.length === 0
+          ? <EmptyState text="No glucose readings yet." />
+          : <GlucoseChart data={data.glucose} dates={glucoseDates} />}
+      </Card>
+
+      {glucoseDates.length > 0 && (
+        <GlucoseLog dates={glucoseDates} data={data.glucose} onOpen={setViewDate} onDelete={deleteGlucoseDay} />
+      )}
+    </div>
+  );
+}
+
+function GlucoseLog({ dates, data, onOpen, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const sorted = [...dates].sort().reverse();
+  return (
+    <Card>
+      <button onClick={() => setOpen(!open)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+        <SectionLabel>Glucose Log ({sorted.length})</SectionLabel>
+        <Icon name={open ? "chevron-left" : "chevron-right"} size={14} color={C.muted} style={{ transform: open ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+      </button>
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 288, overflowY: "auto", marginTop: 12 }}>
+          {sorted.map((d, i) => {
+            const v = data[d] || {};
+            return (
+              <div key={d} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}`, paddingTop: i === 0 ? 0 : 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <button onClick={() => onOpen(d)} style={{ fontSize: 12, color: C.faint, background: "none", border: "none", textAlign: "left" }}>{fmtDate(d)}</button>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "'JetBrains Mono', monospace", fontSize: 13 }}>
+                  <span style={{ color: C.gold }}>{v.morning != null ? v.morning : "—"}</span>
+                  <span style={{ color: C.blue }}>{v.afterLunch != null ? v.afterLunch : "—"}</span>
+                  <span style={{ color: C.red }}>{v.afterDinner != null ? v.afterDinner : "—"}</span>
+                  <button onClick={() => onDelete(d)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="x" size={13} /></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function GlucoseChart({ data, dates }) {
+  const [tab, setTab] = useState("morning");
+  const daySpacing = 46;
+  const padTop = 10, padBottom = 22, height = 150;
+  const width = Math.max(dates.length * daySpacing, 280);
+  const series = [
+    { key: "morning", label: "Morning", color: C.gold },
+    { key: "afterLunch", label: "Post-Lunch", color: C.blue },
+    { key: "afterDinner", label: "Post-Dinner", color: C.red },
+  ];
+  const active = series.find((s) => s.key === tab);
+  const values = [];
+  dates.forEach((d) => { const v = data[d] && data[d][active.key]; if (v != null) values.push(v); });
+  const minV = Math.min(60, ...values) - 10;
+  const maxV = Math.max(200, ...values) + 10;
+  const yFor = (v) => padTop + (1 - (v - minV) / (maxV - minV)) * (height - padTop - padBottom);
+  const xFor = (i) => i * daySpacing + daySpacing / 2;
+  const pts = dates.map((d, i) => ({ i, v: data[d] ? data[d][active.key] : undefined })).filter((p) => p.v != null);
+  const lineStr = pts.map((p) => `${xFor(p.i)},${yFor(p.v)}`).join(" ");
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {series.map((s) => (
+          <button
+            key={s.key}
+            onClick={() => setTab(s.key)}
+            style={{
+              flex: 1, fontSize: 12, padding: "8px 0", borderRadius: 999, border: `1px solid ${tab === s.key ? s.color : C.border}`,
+              background: tab === s.key ? s.color : "none", color: tab === s.key ? C.bg : C.muted, fontWeight: tab === s.key ? 600 : 400,
+            }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+      {pts.length === 0 ? (
+        <EmptyState text={`No ${active.label.toLowerCase()} readings yet.`} />
+      ) : (
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <svg width={width} height={height}>
+            <rect x={0} y={yFor(140)} width={width} height={yFor(70) - yFor(140)} fill={C.green} opacity={0.08} />
+            {pts.length > 1 && <polyline points={lineStr} fill="none" stroke={active.color} strokeWidth={2} />}
+            {pts.map((p) => <circle key={p.i} cx={xFor(p.i)} cy={yFor(p.v)} r={3.5} fill={active.color} />)}
+            {dates.map((d, i) => (
+              <text key={d} x={xFor(i)} y={height - 6} fontSize={9} fill={C.faint} textAnchor="middle">
+                {new Date(d + "T00:00:00").toLocaleDateString(undefined, { month: "numeric", day: "numeric" })}
+              </text>
+            ))}
+          </svg>
+        </div>
+      )}
     </div>
   );
 }
