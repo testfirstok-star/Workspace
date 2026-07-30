@@ -83,6 +83,7 @@ function Icon({ name, size = 18, color = "currentColor", style }) {
     case "refresh": return <svg {...p}><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21 3 21 9 15 9" /></svg>;
     case "award": return <svg {...p}><circle cx="12" cy="8" r="6" /><path d="M8.5 13.5L7 22l5-3 5 3-1.5-8.5" /></svg>;
     case "pencil": return <svg {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>;
+    case "calendar": return <svg {...p}><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>;
     default: return null;
   }
 }
@@ -645,6 +646,439 @@ function HabitsPage() {
   );
 }
 
+// ============ COUNTDOWN ============
+const COUNTDOWN_PALETTE = ["#C9A961", "#6FA8C9", "#7FB069", "#C1554D", "#9B8AC4", "#D98CB3", "#4FBDBD", "#E0A458", "#8FA6D9", "#B5CE6B", "#C97FAE", "#6B8F9E"];
+
+function nextOccurrence(item, today) {
+  const anchor = new Date(item.date + "T00:00:00");
+  if (item.recurrence === "weekly") {
+    let d = new Date(anchor);
+    while (d < today) d.setDate(d.getDate() + 7);
+    return d;
+  }
+  if (item.recurrence === "monthly") {
+    let d = new Date(today.getFullYear(), today.getMonth(), anchor.getDate());
+    if (d < today) d = new Date(today.getFullYear(), today.getMonth() + 1, anchor.getDate());
+    return d;
+  }
+  if (item.recurrence === "yearly") {
+    let d = new Date(today.getFullYear(), anchor.getMonth(), anchor.getDate());
+    if (d < today) d = new Date(today.getFullYear() + 1, anchor.getMonth(), anchor.getDate());
+    return d;
+  }
+  return anchor;
+}
+function daysBetween(a, b) { return Math.round((a - b) / 86400000); }
+function occursOnDate(item, cellDate) {
+  const anchor = new Date(item.date + "T00:00:00");
+  if (item.recurrence === "yearly") return cellDate.getMonth() === anchor.getMonth() && cellDate.getDate() === anchor.getDate();
+  if (item.recurrence === "monthly") return cellDate.getDate() === anchor.getDate();
+  if (item.recurrence === "weekly") return cellDate >= anchor && Math.round((cellDate - anchor) / 86400000) % 7 === 0;
+  return cellDate.getTime() === anchor.getTime();
+}
+
+function tagColorFor(tag, tagColors) {
+  return tagColors[tag] || COUNTDOWN_PALETTE[0];
+}
+
+function CountdownPage() {
+  const [data, setData] = useState(() => load("countdown-data", { items: [], tagColors: {}, visibleTags: {}, calendarEntries: [] }));
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [activeFilter, setActiveFilter] = useState(null);
+  const [calOpen, setCalOpen] = useState(true);
+  const [calMonth, setCalMonth] = useState(new Date());
+  const [calAddDate, setCalAddDate] = useState(null);
+  const [editingEntryId, setEditingEntryId] = useState(null);
+  const [colorPickerTag, setColorPickerTag] = useState(null);
+
+  useEffect(() => { save("countdown-data", data); }, [data]);
+
+  const calendarEntries = data.calendarEntries || [];
+  const tags = Object.keys(data.tagColors);
+  const isVisible = (tag) => data.visibleTags[tag] !== false;
+
+  const ensureTag = (tag, current) => {
+    if (current[tag]) return current;
+    const used = Object.keys(current);
+    const color = COUNTDOWN_PALETTE[used.length % COUNTDOWN_PALETTE.length];
+    return { ...current, [tag]: color };
+  };
+
+  const addOrUpdateItem = (fields) => {
+    setData((d) => {
+      const tagColors = ensureTag(fields.tag, d.tagColors);
+      const visibleTags = d.visibleTags[fields.tag] === undefined ? { ...d.visibleTags, [fields.tag]: true } : d.visibleTags;
+      let items;
+      if (editingId) {
+        items = d.items.map((it) => (it.id === editingId ? { ...it, ...fields } : it));
+      } else {
+        items = [{ id: Date.now(), ...fields }, ...d.items];
+      }
+      return { ...d, items, tagColors, visibleTags };
+    });
+    setShowForm(false); setEditingId(null);
+  };
+
+  const deleteItem = (id) => setData((d) => ({ ...d, items: d.items.filter((it) => it.id !== id) }));
+  const toggleTagVisible = (tag) => setData((d) => ({ ...d, visibleTags: { ...d.visibleTags, [tag]: !isVisible(tag) } }));
+  const setTagColor = (tag, color) => { setData((d) => ({ ...d, tagColors: { ...d.tagColors, [tag]: color } })); setColorPickerTag(null); };
+
+  const addOrUpdateEntry = (fields) => {
+    setData((d) => {
+      const tagColors = ensureTag(fields.tag, d.tagColors);
+      const visibleTags = d.visibleTags[fields.tag] === undefined ? { ...d.visibleTags, [fields.tag]: true } : d.visibleTags;
+      const existing = d.calendarEntries || [];
+      let entries;
+      if (editingEntryId) {
+        entries = existing.map((e) => (e.id === editingEntryId ? { ...e, ...fields } : e));
+      } else {
+        entries = [{ id: Date.now(), ...fields }, ...existing];
+      }
+      return { ...d, calendarEntries: entries, tagColors, visibleTags };
+    });
+    setCalAddDate(null); setEditingEntryId(null);
+  };
+  const deleteEntry = (id) => setData((d) => ({ ...d, calendarEntries: (d.calendarEntries || []).filter((e) => e.id !== id) }));
+  const startEditEntry = (e) => { setEditingEntryId(e.id); setCalAddDate(e.date); };
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const withDays = data.items.map((it) => {
+    const occ = nextOccurrence(it, today);
+    return { ...it, days: daysBetween(occ, today) };
+  });
+  const upcoming = withDays.filter((it) => it.days >= 0).sort((a, b) => a.days - b.days);
+  const past = withDays.filter((it) => it.days < 0).sort((a, b) => b.days - a.days);
+  let listItems = [...upcoming, ...past];
+  if (activeFilter) listItems = listItems.filter((it) => it.tag === activeFilter);
+
+  const startEdit = (it) => {
+    setEditingId(it.id); setShowForm(true);
+  };
+  const editingItem = editingId ? data.items.find((it) => it.id === editingId) : null;
+  const editingEntry = editingEntryId ? calendarEntries.find((e) => e.id === editingEntryId) : (calAddDate ? { date: calAddDate } : null);
+
+  const sortedEntries = [...calendarEntries].sort((a, b) => a.date.localeCompare(b.date));
+
+  const daysLabel = (n) => (n === 0 ? "Today" : n === 1 ? "Tomorrow" : n > 1 ? `In ${n}d` : n === -1 ? "Yesterday" : `${-n}d ago`);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+      <PageTitle>Countdown</PageTitle>
+
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <SectionLabel>Countdowns</SectionLabel>
+          <button onClick={() => (showForm ? (setShowForm(false), setEditingId(null)) : (setShowForm(true), setEditingId(null)))} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+            <Icon name={showForm ? "x" : "plus"} size={14} /> {showForm ? "Cancel" : "Add"}
+          </button>
+        </div>
+
+        {showForm && (
+          <CountdownForm
+            tagColors={data.tagColors}
+            initial={editingItem}
+            onCancel={() => { setShowForm(false); setEditingId(null); }}
+            onSubmit={addOrUpdateItem}
+          />
+        )}
+
+        {tags.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 2 }}>
+            <button onClick={() => setActiveFilter(null)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${activeFilter === null ? C.gold : C.border}`, background: activeFilter === null ? C.gold : "none", color: activeFilter === null ? C.bg : C.muted }}>All</button>
+            {tags.map((tag) => (
+              <button key={tag} onClick={() => setActiveFilter(activeFilter === tag ? null : tag)} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${activeFilter === tag ? data.tagColors[tag] : C.border}`, background: activeFilter === tag ? data.tagColors[tag] : "none", color: activeFilter === tag ? C.bg : C.muted }}>
+                <div style={{ width: 6, height: 6, borderRadius: 999, background: activeFilter === tag ? C.bg : data.tagColors[tag] }} />
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+          {listItems.length === 0 && <EmptyState text="No countdowns yet. Add one above." />}
+          {listItems.map((it) => (
+            <div key={it.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0" }}>
+              <div style={{ marginTop: 5, width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: tagColorFor(it.tag, data.tagColors) }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, color: C.text }}>{it.title}</div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                  {it.tag}{it.recurrence !== "none" ? ` · ${it.recurrence}` : ""}
+                </div>
+              </div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: it.days < 0 ? C.faint : it.days <= 7 ? C.gold : C.textDim, flexShrink: 0, marginTop: 2 }}>
+                {daysLabel(it.days)}
+              </div>
+              <button onClick={() => startEdit(it)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
+              <button onClick={() => deleteItem(it.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <button onClick={() => setCalOpen(!calOpen)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+          <SectionLabel>Calendar</SectionLabel>
+          <Icon name={calOpen ? "chevron-left" : "chevron-right"} size={14} color={C.muted} style={{ transform: calOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+        </button>
+
+        {calOpen && (
+          <div style={{ marginTop: 12 }}>
+            <CountdownCalendarGrid
+              month={calMonth}
+              onMonthChange={setCalMonth}
+              items={data.items}
+              entries={calendarEntries}
+              tagColors={data.tagColors}
+              isVisible={isVisible}
+              selected={calAddDate}
+              onSelectDate={(iso) => { setEditingEntryId(null); setCalAddDate(calAddDate === iso ? null : iso); }}
+            />
+
+            {calAddDate && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>{editingEntryId ? "Edit entry" : `Add entry on ${fmtDate(calAddDate)}`}</div>
+                <CalendarEntryForm
+                  tagColors={data.tagColors}
+                  initial={editingEntry}
+                  onCancel={() => { setCalAddDate(null); setEditingEntryId(null); }}
+                  onSubmit={addOrUpdateEntry}
+                />
+              </div>
+            )}
+
+            {tags.length > 0 && (
+              <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>Show on calendar</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {tags.map((tag) => (
+                    <div key={tag} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <button onClick={() => toggleTagVisible(tag)} style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0, background: isVisible(tag) ? data.tagColors[tag] : "none", border: `1px solid ${isVisible(tag) ? data.tagColors[tag] : C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {isVisible(tag) && <Icon name="check" size={11} color={C.bg} />}
+                      </button>
+                      <span style={{ fontSize: 13, color: C.textDim, flex: 1 }}>{tag}</span>
+                      <button onClick={() => setColorPickerTag(colorPickerTag === tag ? null : tag)} style={{ width: 20, height: 20, borderRadius: 999, background: data.tagColors[tag], border: `1px solid ${C.border}` }} />
+                    </div>
+                  ))}
+                </div>
+                {colorPickerTag && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10, padding: 10, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                    {COUNTDOWN_PALETTE.map((c) => (
+                      <button key={c} onClick={() => setTagColor(colorPickerTag, c)} style={{ width: 24, height: 24, borderRadius: 999, background: c, border: c === data.tagColors[colorPickerTag] ? `2px solid ${C.text}` : "none" }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <SectionLabel>Calendar Log</SectionLabel>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+          {sortedEntries.length === 0 && <EmptyState text="No calendar entries yet. Tap a date above to add one." />}
+          {sortedEntries.map((e, i) => (
+            <div key={e.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0", borderTop: i === 0 ? "none" : `1px solid ${C.border}`, paddingTop: i === 0 ? 6 : 12 }}>
+              <div style={{ marginTop: 5, width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: tagColorFor(e.tag, data.tagColors) }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, color: C.text }}>{e.title}</div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                  {e.endDate && e.endDate !== e.date ? `${fmtDate(e.date)} \u2013 ${fmtDate(e.endDate)}` : fmtDate(e.date)} · {e.tag}
+                </div>
+              </div>
+              <button onClick={() => startEditEntry(e)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
+              <button onClick={() => deleteEntry(e.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function CalendarEntryForm({ tagColors, initial, onSubmit, onCancel }) {
+  const [title, setTitle] = useState(initial && initial.title ? initial.title : "");
+  const [date, setDate] = useState(initial && initial.date ? initial.date : todayISO());
+  const [multiDay, setMultiDay] = useState(!!(initial && initial.endDate && initial.endDate !== initial.date));
+  const [endDate, setEndDate] = useState(initial && initial.endDate ? initial.endDate : (initial && initial.date ? initial.date : todayISO()));
+  const [tag, setTag] = useState(initial && initial.tag ? initial.tag : Object.keys(tagColors)[0] || "");
+  const [newTagText, setNewTagText] = useState("");
+  const [addingTag, setAddingTag] = useState(false);
+
+  const submit = () => {
+    const finalTag = (addingTag && newTagText.trim()) ? newTagText.trim() : tag;
+    if (!title.trim() || !date || !finalTag) return;
+    const finalEnd = multiDay && endDate && endDate >= date ? endDate : null;
+    onSubmit({ title: title.trim(), date, endDate: finalEnd, tag: finalTag });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+      <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Entry title" style={{ border: "none", borderBottom: `1px solid ${C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>{multiDay ? "Start date" : "Date"}</div>
+        <DateField value={date} onChange={(v) => { setDate(v); if (endDate < v) setEndDate(v); }} />
+      </div>
+
+      <button onClick={() => setMultiDay(!multiDay)} style={{ display: "flex", alignItems: "center", gap: 6, alignSelf: "flex-start", fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${multiDay ? C.gold : C.border}`, background: multiDay ? C.gold : "none", color: multiDay ? C.bg : C.muted }}>
+        <Icon name={multiDay ? "check" : "plus"} size={11} /> Multi-day
+      </button>
+
+      {multiDay && (
+        <div>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>End date</div>
+          <DateField value={endDate} onChange={setEndDate} />
+        </div>
+      )}
+
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Tag</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {Object.keys(tagColors).map((t) => (
+            <button key={t} onClick={() => { setTag(t); setAddingTag(false); }} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${!addingTag && tag === t ? tagColors[t] : C.border}`, background: !addingTag && tag === t ? tagColors[t] : "none", color: !addingTag && tag === t ? C.bg : C.muted }}>
+              <div style={{ width: 6, height: 6, borderRadius: 999, background: !addingTag && tag === t ? C.bg : tagColors[t] }} />
+              {t}
+            </button>
+          ))}
+          <button onClick={() => setAddingTag(true)} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${addingTag ? C.gold : C.border}`, background: addingTag ? C.gold : "none", color: addingTag ? C.bg : C.muted }}>
+            + New
+          </button>
+        </div>
+        {addingTag && (
+          <div style={{ marginTop: 8 }}>
+            <TextInput value={newTagText} onChange={(e) => setNewTagText(e.target.value)} placeholder="New tag name" />
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <GoldButton onClick={submit}>{initial && initial.id ? "Save changes" : "Add entry"}</GoldButton>
+        {onCancel && (
+          <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CountdownForm({ tagColors, initial, onSubmit, onCancel }) {
+  const [title, setTitle] = useState(initial && initial.title ? initial.title : "");
+  const [date, setDate] = useState(initial && initial.date ? initial.date : todayISO());
+  const [recurrence, setRecurrence] = useState(initial && initial.recurrence ? initial.recurrence : "none");
+  const [tag, setTag] = useState(initial && initial.tag ? initial.tag : Object.keys(tagColors)[0] || "");
+  const [newTagText, setNewTagText] = useState("");
+  const [addingTag, setAddingTag] = useState(false);
+
+  const recurrences = [
+    { id: "none", label: "One-time" },
+    { id: "weekly", label: "Weekly" },
+    { id: "monthly", label: "Monthly" },
+    { id: "yearly", label: "Yearly" },
+  ];
+
+  const submit = () => {
+    const finalTag = (addingTag && newTagText.trim()) ? newTagText.trim() : tag;
+    if (!title.trim() || !date || !finalTag) return;
+    onSubmit({ title: title.trim(), date, recurrence, tag: finalTag });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+      <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What are you counting down to?" style={{ border: "none", borderBottom: `1px solid ${C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Date</div>
+        <DateField value={date} onChange={setDate} />
+      </div>
+
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Repeats</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {recurrences.map((r) => (
+            <button key={r.id} onClick={() => setRecurrence(r.id)} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${recurrence === r.id ? C.gold : C.border}`, background: recurrence === r.id ? C.gold : "none", color: recurrence === r.id ? C.bg : C.muted }}>
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Tag</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {Object.keys(tagColors).map((t) => (
+            <button key={t} onClick={() => { setTag(t); setAddingTag(false); }} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${!addingTag && tag === t ? tagColors[t] : C.border}`, background: !addingTag && tag === t ? tagColors[t] : "none", color: !addingTag && tag === t ? C.bg : C.muted }}>
+              <div style={{ width: 6, height: 6, borderRadius: 999, background: !addingTag && tag === t ? C.bg : tagColors[t] }} />
+              {t}
+            </button>
+          ))}
+          <button onClick={() => setAddingTag(true)} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${addingTag ? C.gold : C.border}`, background: addingTag ? C.gold : "none", color: addingTag ? C.bg : C.muted }}>
+            + New
+          </button>
+        </div>
+        {addingTag && (
+          <div style={{ marginTop: 8 }}>
+            <TextInput value={newTagText} onChange={(e) => setNewTagText(e.target.value)} placeholder="New tag name" />
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <GoldButton onClick={submit}>{initial && initial.id ? "Save changes" : "Add countdown"}</GoldButton>
+        {onCancel && (
+          <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CountdownCalendarGrid({ month, onMonthChange, items, entries, tagColors, isVisible, selected, onSelectDate }) {
+  const y = month.getFullYear(), m = month.getMonth();
+  const startOffset = new Date(y, m, 1).getDay();
+  const total = daysInMonth(y, m);
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) cells.push(null);
+  for (let d = 1; d <= total; d++) cells.push(d);
+
+  return (
+    <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <button onClick={() => onMonthChange(new Date(y, m - 1, 1))} style={iconBtnStyle}><Icon name="chevron-left" size={16} /></button>
+        <div style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</div>
+        <button onClick={() => onMonthChange(new Date(y, m + 1, 1))} style={iconBtnStyle}><Icon name="chevron-right" size={16} /></button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, fontSize: 10, color: C.faint, textAlign: "center", marginBottom: 4 }}>
+        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <div key={i}>{d}</div>)}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+        {cells.map((d, i) => {
+          if (!d) return <div key={i} />;
+          const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          const cellDate = new Date(y, m, d);
+          const isSel = iso === selected;
+          const fromItems = items.filter((it) => isVisible(it.tag) && occursOnDate(it, cellDate));
+          const fromEntries = (entries || []).filter((e) => isVisible(e.tag) && iso >= e.date && iso <= (e.endDate || e.date));
+          const dayItems = [...fromItems, ...fromEntries].slice(0, 3);
+          const rangeSpan = fromEntries.find((e) => e.endDate && e.endDate !== e.date);
+          const tint = rangeSpan ? `${tagColorFor(rangeSpan.tag, tagColors)}30` : "transparent";
+          return (
+            <button key={i} onClick={() => onSelectDate(iso)} style={{ aspectRatio: "1", borderRadius: 8, fontSize: 12, border: "none", background: isSel ? C.gold : tint, color: isSel ? C.bg : C.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, padding: 2 }}>
+              <span>{d}</span>
+              {dayItems.length > 0 && (
+                <div style={{ display: "flex", gap: 2 }}>
+                  {dayItems.map((it, idx) => <div key={idx} style={{ width: 4, height: 4, borderRadius: 999, background: isSel ? C.bg : tagColorFor(it.tag, tagColors) }} />)}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ============ TRADING ============
 function TradingPage() {
   const [entries, setEntries] = useState(() => load("trading-data", { entries: [] }).entries);
@@ -877,7 +1311,7 @@ const CHEATSHEET_IMG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
 // ============ BACKUP (real file download) ============
 function downloadBackup() {
-  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data"];
+  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data"];
   const out = {};
   keys.forEach((k) => { out[k] = load(k, null); });
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
@@ -898,7 +1332,7 @@ function RestoreModal({ onClose }) {
     setStatus("working");
     try {
       const parsed = JSON.parse(jsonText);
-      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data"];
+      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data"];
       keys.forEach((k) => { if (parsed[k] !== undefined && parsed[k] !== null) save(k, parsed[k]); });
       setStatus("done");
       setTimeout(() => window.location.reload(), 900);
@@ -953,6 +1387,7 @@ function App() {
     { id: "health", label: "Health", icon: "heart" },
     { id: "habits", label: "Habits", icon: "list-checks" },
     { id: "trading", label: "Trading", icon: "trending-up" },
+    { id: "countdown", label: "Countdown", icon: "calendar" },
   ];
 
   return (
@@ -987,6 +1422,7 @@ function App() {
         {tab === "habits" && <HabitsPage />}
         {tab === "trading" && <TradingPage />}
         {tab === "trend" && <TrendPage />}
+        {tab === "countdown" && <CountdownPage />}
       </div>
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(11,13,16,0.95)", backdropFilter: "blur(8px)", borderTop: `1px solid ${C.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
         <div style={{ maxWidth: 448, margin: "0 auto", display: "flex" }}>
