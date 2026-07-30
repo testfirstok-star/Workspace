@@ -725,17 +725,22 @@ function CountdownPage() {
   const setTagColor = (tag, color) => { setData((d) => ({ ...d, tagColors: { ...d.tagColors, [tag]: color } })); setColorPickerTag(null); };
 
   const addOrUpdateEntry = (fields) => {
+    const { createCountdown, ...entryFields } = fields;
     setData((d) => {
-      const tagColors = ensureTag(fields.tag, d.tagColors);
-      const visibleTags = d.visibleTags[fields.tag] === undefined ? { ...d.visibleTags, [fields.tag]: true } : d.visibleTags;
+      const tagColors = ensureTag(entryFields.tag, d.tagColors);
+      const visibleTags = d.visibleTags[entryFields.tag] === undefined ? { ...d.visibleTags, [entryFields.tag]: true } : d.visibleTags;
       const existing = d.calendarEntries || [];
       let entries;
       if (editingEntryId) {
-        entries = existing.map((e) => (e.id === editingEntryId ? { ...e, ...fields } : e));
+        entries = existing.map((e) => (e.id === editingEntryId ? { ...e, ...entryFields } : e));
       } else {
-        entries = [{ id: Date.now(), ...fields }, ...existing];
+        entries = [{ id: Date.now(), ...entryFields }, ...existing];
       }
-      return { ...d, calendarEntries: entries, tagColors, visibleTags };
+      let items = d.items;
+      if (createCountdown) {
+        items = [{ id: Date.now() + 1, title: entryFields.title, date: entryFields.date, recurrence: "none", tag: entryFields.tag }, ...d.items];
+      }
+      return { ...d, calendarEntries: entries, items, tagColors, visibleTags };
     });
     setCalAddDate(null); setEditingEntryId(null);
   };
@@ -905,12 +910,14 @@ function CalendarEntryForm({ tagColors, initial, onSubmit, onCancel }) {
   const [tag, setTag] = useState(initial && initial.tag ? initial.tag : Object.keys(tagColors)[0] || "");
   const [newTagText, setNewTagText] = useState("");
   const [addingTag, setAddingTag] = useState(false);
+  const [createCountdown, setCreateCountdown] = useState(false);
+  const isEditing = !!(initial && initial.id);
 
   const submit = () => {
     const finalTag = (addingTag && newTagText.trim()) ? newTagText.trim() : tag;
     if (!title.trim() || !date || !finalTag) return;
     const finalEnd = multiDay && endDate && endDate >= date ? endDate : null;
-    onSubmit({ title: title.trim(), date, endDate: finalEnd, tag: finalTag });
+    onSubmit({ title: title.trim(), date, endDate: finalEnd, tag: finalTag, createCountdown: !isEditing && createCountdown });
   };
 
   return (
@@ -952,6 +959,15 @@ function CalendarEntryForm({ tagColors, initial, onSubmit, onCancel }) {
           </div>
         )}
       </div>
+
+      {!isEditing && (
+        <button onClick={() => setCreateCountdown(!createCountdown)} style={{ display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-start" }}>
+          <div style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0, background: createCountdown ? C.gold : "none", border: `1px solid ${createCountdown ? C.gold : C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {createCountdown && <Icon name="check" size={11} color={C.bg} />}
+          </div>
+          <span style={{ fontSize: 12, color: C.textDim }}>Also add to Countdowns</span>
+        </button>
+      )}
 
       <div style={{ display: "flex", gap: 8 }}>
         <GoldButton onClick={submit}>{initial && initial.id ? "Save changes" : "Add entry"}</GoldButton>
