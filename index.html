@@ -1363,12 +1363,29 @@ function CountdownCalendarGrid({ month, onMonthChange, items, entries, tagColors
 
 // ============ TRADING ============
 function TradingPage() {
-  const [entries, setEntries] = useState(() => load("trading-data", { entries: [] }).entries);
+  const [data, setData] = useState(() => {
+    const d = load("trading-data", { entries: [], startingBalance: 0, withdrawals: [], shareEntries: [], sgdRate: 1.3 });
+    return { entries: d.entries || [], startingBalance: d.startingBalance || 0, withdrawals: d.withdrawals || [], shareEntries: d.shareEntries || [], sgdRate: d.sgdRate || 1.3 };
+  });
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ date: todayISO(), pnl: "", notes: "" });
   const [viewMonth, setViewMonth] = useState(new Date());
 
-  useEffect(() => { save("trading-data", { entries }); }, [entries]);
+  useEffect(() => { save("trading-data", data); }, [data]);
+
+  const entries = data.entries;
+  const setEntries = (updater) => setData((d) => ({ ...d, entries: typeof updater === "function" ? updater(d.entries) : updater }));
+  const withdrawals = data.withdrawals;
+  const shareEntries = data.shareEntries;
+  const startingBalance = data.startingBalance;
+  const sgdRate = data.sgdRate;
+  const setStartingBalance = (v) => setData((d) => ({ ...d, startingBalance: v }));
+  const setSgdRate = (v) => setData((d) => ({ ...d, sgdRate: v }));
+  const addWithdrawal = (fields) => setData((d) => ({ ...d, withdrawals: [{ id: Date.now(), ...fields }, ...d.withdrawals] }));
+  const deleteWithdrawal = (id) => setData((d) => ({ ...d, withdrawals: d.withdrawals.filter((w) => w.id !== id) }));
+  const addShareEntry = (fields) => setData((d) => ({ ...d, shareEntries: [{ id: Date.now(), ...fields, transferred: false }, ...d.shareEntries] }));
+  const toggleShareTransferred = (id) => setData((d) => ({ ...d, shareEntries: d.shareEntries.map((s) => (s.id === id ? { ...s, transferred: !s.transferred } : s)) }));
+  const deleteShareEntry = (id) => setData((d) => ({ ...d, shareEntries: d.shareEntries.filter((s) => s.id !== id) }));
 
   const byDate = useMemo(() => { const m = {}; entries.forEach((e) => { m[e.date] = (m[e.date] || 0) + e.pnl; }); return m; }, [entries]);
 
@@ -1449,6 +1466,7 @@ function TradingPage() {
         <StatCard label="Weekly profit" value={money(weeklyProfit)} color={weeklyProfit >= 0 ? C.green : C.red} />
         <StatCard label="Win streak" value={`${consecutiveWinDays}d`} color={C.gold} />
       </div>
+
       <Card>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <button onClick={() => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1))} style={iconBtnStyle}><Icon name="chevron-left" size={18} /></button>
@@ -1484,6 +1502,25 @@ function TradingPage() {
         </div>
       </Card>
 
+      <AccountBalanceSection
+        startingBalance={startingBalance}
+        setStartingBalance={setStartingBalance}
+        totalPnL={totalAll}
+        withdrawals={withdrawals}
+        addWithdrawal={addWithdrawal}
+        deleteWithdrawal={deleteWithdrawal}
+        shareEntries={shareEntries}
+        sgdRate={sgdRate}
+        setSgdRate={setSgdRate}
+      />
+
+      <ProfitSharingSection
+        shareEntries={shareEntries}
+        addShareEntry={addShareEntry}
+        toggleShareTransferred={toggleShareTransferred}
+        deleteShareEntry={deleteShareEntry}
+      />
+
       <LogSection entries={entries} openForm={openForm} deleteEntry={deleteEntry} />
     </div>
   );
@@ -1512,6 +1549,196 @@ function LogSection({ entries, openForm, deleteEntry }) {
               {e.notes && <div style={{ fontSize: 14, color: C.textDim, marginTop: 4 }}>{e.notes}</div>}
             </div>
           ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function AccountBalanceSection({ startingBalance, setStartingBalance, totalPnL, withdrawals, addWithdrawal, deleteWithdrawal, shareEntries, sgdRate, setSgdRate }) {
+  const [open, setOpen] = useState(true);
+  const [editingBalance, setEditingBalance] = useState(false);
+  const [balanceInput, setBalanceInput] = useState(String(startingBalance));
+  const [editingRate, setEditingRate] = useState(false);
+  const [rateInput, setRateInput] = useState(String(sgdRate));
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ date: todayISO(), amount: "", notes: "" });
+
+  const totalWithdrawals = withdrawals.reduce((s, w) => s + w.amount, 0);
+  const currentBalance = startingBalance + totalPnL - totalWithdrawals;
+  const totalSharedSGD = shareEntries.reduce((s, e) => s + e.amount, 0);
+  const totalSharedUSD = totalSharedSGD / sgdRate;
+  const realBalance = currentBalance - totalSharedUSD;
+
+  const saveBalance = () => {
+    const v = Number(balanceInput);
+    if (!isNaN(v)) setStartingBalance(v);
+    setEditingBalance(false);
+  };
+  const saveRate = () => {
+    const v = Number(rateInput);
+    if (!isNaN(v) && v > 0) setSgdRate(v);
+    setEditingRate(false);
+  };
+
+  const submitWithdrawal = () => {
+    if (!form.amount) return;
+    addWithdrawal({ date: form.date, amount: Number(form.amount), notes: form.notes.trim() });
+    setForm({ date: todayISO(), amount: "", notes: "" });
+    setShowForm(false);
+  };
+
+  return (
+    <Card>
+      <button onClick={() => setOpen(!open)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+        <SectionLabel>Account Balance</SectionLabel>
+        <Icon name={open ? "chevron-left" : "chevron-right"} size={14} color={C.muted} style={{ transform: open ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+      </button>
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ textAlign: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Current Balance</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 28, color: C.gold, marginTop: 4 }}>{money(currentBalance)}</div>
+          </div>
+          <div style={{ textAlign: "center", marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Real Balance (after profit share)</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, color: C.textDim, marginTop: 4 }}>{money(realBalance)}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 4 }}>
+              {editingRate ? (
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <TextInput type="number" value={rateInput} onChange={(e) => setRateInput(e.target.value)} style={{ width: 70, padding: "4px 8px" }} />
+                  <button onClick={saveRate} style={{ color: C.gold, background: "none", border: "none" }}><Icon name="check" size={13} /></button>
+                </div>
+              ) : (
+                <button onClick={() => { setRateInput(String(sgdRate)); setEditingRate(true); }} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: C.faint, fontSize: 10 }}>
+                  SGD ÷ {sgdRate} <Icon name="pencil" size={10} color={C.faint} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, color: C.muted, marginBottom: 6 }}>
+            <span>Starting balance</span>
+            {editingBalance ? (
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <TextInput type="number" value={balanceInput} onChange={(e) => setBalanceInput(e.target.value)} style={{ width: 100, padding: "4px 8px" }} />
+                <button onClick={saveBalance} style={{ color: C.gold, background: "none", border: "none" }}><Icon name="check" size={14} /></button>
+              </div>
+            ) : (
+              <button onClick={() => { setBalanceInput(String(startingBalance)); setEditingBalance(true); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.textDim, fontFamily: "'JetBrains Mono', monospace", fontSize: 13 }}>
+                {money(startingBalance)} <Icon name="pencil" size={11} color={C.faint} />
+              </button>
+            )}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.muted, marginBottom: 6 }}>
+            <span>Total P&L</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: totalPnL >= 0 ? C.green : C.red }}>{money(totalPnL)}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.muted, marginBottom: 16 }}>
+            <span>Total withdrawals</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: C.red }}>{money(totalWithdrawals)}</span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: C.muted }}>Withdrawals</span>
+            <button onClick={() => setShowForm(!showForm)} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+              <Icon name={showForm ? "x" : "plus"} size={13} /> {showForm ? "Cancel" : "Add"}
+            </button>
+          </div>
+          {showForm && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+              <DateField value={form.date} onChange={(v) => setForm({ ...form, date: v })} />
+              <TextInput type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="Withdrawal amount" />
+              <TextInput value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes (optional)" />
+              <GoldButton onClick={submitWithdrawal}>Add withdrawal</GoldButton>
+            </div>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 200, overflowY: "auto" }}>
+            {withdrawals.length === 0 && <EmptyState text="No withdrawals logged." />}
+            {[...withdrawals].sort((a, b) => b.date.localeCompare(a.date)).map((w, i) => (
+              <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: C.text }}>{fmtDate(w.date)}</div>
+                  {w.notes && <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{w.notes}</div>}
+                </div>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: C.red }}>-{money(w.amount)}</span>
+                <button onClick={() => deleteWithdrawal(w.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ProfitSharingSection({ shareEntries, addShareEntry, toggleShareTransferred, deleteShareEntry }) {
+  const [open, setOpen] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ date: todayISO(), amount: "", notes: "" });
+
+  const totalOwed = shareEntries.filter((s) => !s.transferred).reduce((s, e) => s + e.amount, 0);
+  const totalTransferred = shareEntries.filter((s) => s.transferred).reduce((s, e) => s + e.amount, 0);
+
+  const submit = () => {
+    if (!form.amount) return;
+    addShareEntry({ date: form.date, amount: Number(form.amount), notes: form.notes.trim() });
+    setForm({ date: todayISO(), amount: "", notes: "" });
+    setShowForm(false);
+  };
+
+  const sorted = [...shareEntries].sort((a, b) => b.date.localeCompare(a.date));
+
+  return (
+    <Card>
+      <button onClick={() => setOpen(!open)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+        <SectionLabel>Profit Sharing</SectionLabel>
+        <Icon name={open ? "chevron-left" : "chevron-right"} size={14} color={C.muted} style={{ transform: open ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+      </button>
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+            <div style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Owed</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, color: C.red, marginTop: 4 }}>{money(totalOwed)}</div>
+            </div>
+            <div style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Transferred</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, color: C.green, marginTop: 4 }}>{money(totalTransferred)}</div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: C.muted }}>Log</span>
+            <button onClick={() => setShowForm(!showForm)} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+              <Icon name={showForm ? "x" : "plus"} size={13} /> {showForm ? "Cancel" : "Add"}
+            </button>
+          </div>
+          {showForm && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+              <DateField value={form.date} onChange={(v) => setForm({ ...form, date: v })} />
+              <TextInput type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="Amount to share" />
+              <TextInput value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes (optional)" />
+              <GoldButton onClick={submit}>Add entry</GoldButton>
+            </div>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 240, overflowY: "auto" }}>
+            {sorted.length === 0 && <EmptyState text="No profit-share entries yet." />}
+            {sorted.map((s, i) => (
+              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+                <button onClick={() => toggleShareTransferred(s.id)} style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: s.transferred ? C.green : "none", border: `1px solid ${s.transferred ? C.green : C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {s.transferred && <Icon name="check" size={12} color={C.bg} />}
+                </button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: C.text }}>{fmtDate(s.date)}</div>
+                  {s.notes && <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{s.notes}</div>}
+                  <div style={{ fontSize: 10, color: s.transferred ? C.green : C.gold, marginTop: 2 }}>{s.transferred ? "Transferred" : "Pending"}</div>
+                </div>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: C.textDim }}>{money(s.amount)}</span>
+                <button onClick={() => deleteShareEntry(s.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </Card>
