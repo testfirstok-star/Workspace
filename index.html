@@ -1370,6 +1370,7 @@ function TradingPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ date: todayISO(), pnl: "", notes: "" });
   const [viewMonth, setViewMonth] = useState(new Date());
+  const [journalOpen, setJournalOpen] = useState(true);
 
   useEffect(() => { save("trading-data", data); }, [data]);
 
@@ -1487,19 +1488,24 @@ function TradingPage() {
       </Card>
 
       <Card>
-        <SectionLabel>Journal</SectionLabel>
-        <div style={{ display: "flex", flexDirection: "column", gap: 20, maxHeight: 420, overflowY: "auto" }}>
-          {entries.filter((e) => e.notes && e.notes.trim()).length === 0 && <EmptyState text="No journal notes written yet." />}
-          {[...entries].filter((e) => e.notes && e.notes.trim()).sort((a, b) => b.date.localeCompare(a.date)).map((e, i) => (
-            <div key={e.id} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}`, paddingTop: i === 0 ? 0 : 18 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <span style={{ fontSize: 12, color: C.faint }}>{fmtDate(e.date)}</span>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: e.pnl >= 0 ? C.green : C.red }}>{money(e.pnl)}</span>
+        <button onClick={() => setJournalOpen(!journalOpen)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+          <SectionLabel>Journal</SectionLabel>
+          <Icon name={journalOpen ? "chevron-left" : "chevron-right"} size={14} color={C.muted} style={{ transform: journalOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+        </button>
+        {journalOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20, maxHeight: 420, overflowY: "auto", marginTop: 12 }}>
+            {entries.filter((e) => e.notes && e.notes.trim()).length === 0 && <EmptyState text="No journal notes written yet." />}
+            {[...entries].filter((e) => e.notes && e.notes.trim()).sort((a, b) => b.date.localeCompare(a.date)).map((e, i) => (
+              <div key={e.id} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}`, paddingTop: i === 0 ? 0 : 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, color: C.faint }}>{fmtDate(e.date)}</span>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: e.pnl >= 0 ? C.green : C.red }}>{money(e.pnl)}</span>
+                </div>
+                <div style={{ fontSize: 15, lineHeight: 1.6, color: C.textDim, whiteSpace: "pre-wrap" }}>{e.notes}</div>
               </div>
-              <div style={{ fontSize: 15, lineHeight: 1.6, color: C.textDim, whiteSpace: "pre-wrap" }}>{e.notes}</div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       <AccountBalanceSection
