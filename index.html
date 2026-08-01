@@ -1388,28 +1388,27 @@ function TradingPage() {
   const toggleShareTransferred = (id) => setData((d) => ({ ...d, shareEntries: d.shareEntries.map((s) => (s.id === id ? { ...s, transferred: !s.transferred } : s)) }));
   const deleteShareEntry = (id) => setData((d) => ({ ...d, shareEntries: d.shareEntries.filter((s) => s.id !== id) }));
 
-  const byDate = useMemo(() => { const m = {}; entries.forEach((e) => { m[e.date] = (m[e.date] || 0) + e.pnl; }); return m; }, [entries]);
+  const byDate = useMemo(() => { const m = {}; entries.forEach((e) => { if (e.pnl != null) m[e.date] = (m[e.date] || 0) + e.pnl; }); return m; }, [entries]);
 
   const openForm = (date) => {
     const existing = entries.find((e) => e.date === date);
-    setForm({ date, pnl: existing ? String(existing.pnl) : "", notes: existing ? existing.notes : "" });
+    setForm({ date, pnl: existing && existing.pnl != null ? String(existing.pnl) : "", notes: existing ? existing.notes : "" });
     setShowForm(true);
   };
   const saveEntry = () => {
-    if (!form.pnl) return;
-    setEntries((prev) => { const filtered = prev.filter((e) => e.date !== form.date); return [...filtered, { id: Date.now(), date: form.date, pnl: Number(form.pnl), notes: form.notes.trim() }]; });
+    setEntries((prev) => { const filtered = prev.filter((e) => e.date !== form.date); return [...filtered, { id: Date.now(), date: form.date, pnl: form.pnl === "" ? null : Number(form.pnl), notes: form.notes.trim() }]; });
     setShowForm(false);
   };
   const deleteEntry = (id) => setEntries(entries.filter((e) => e.id !== id));
 
   const monthEntries = entries.filter((e) => { const d = new Date(e.date + "T00:00:00"); return d.getMonth() === viewMonth.getMonth() && d.getFullYear() === viewMonth.getFullYear(); });
-  const monthTotal = monthEntries.reduce((s, e) => s + e.pnl, 0);
-  const totalAll = entries.reduce((s, e) => s + e.pnl, 0);
+  const monthTotal = monthEntries.reduce((s, e) => s + (e.pnl || 0), 0);
+  const totalAll = entries.reduce((s, e) => s + (e.pnl || 0), 0);
 
   const weeklyProfit = useMemo(() => {
     const weekStart = new Date(); weekStart.setHours(0, 0, 0, 0); weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6);
-    return entries.filter((e) => { const d = new Date(e.date + "T00:00:00"); return d >= weekStart && d <= weekEnd; }).reduce((s, e) => s + e.pnl, 0);
+    return entries.filter((e) => { const d = new Date(e.date + "T00:00:00"); return d >= weekStart && d <= weekEnd; }).reduce((s, e) => s + (e.pnl || 0), 0);
   }, [entries]);
 
   const consecutiveWinDays = useMemo(() => {
@@ -1480,7 +1479,7 @@ function TradingPage() {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
           {calGrid.map((c, i) => (
-            <button key={i} disabled={!c} onClick={() => c && openForm(c.iso)} style={{ aspectRatio: "1", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "none", background: !c ? "transparent" : c.pnl === undefined ? C.bg : c.pnl >= 0 ? "rgba(127,176,105,0.2)" : "rgba(193,85,77,0.2)", color: !c ? "transparent" : c.pnl === undefined ? C.faint : c.pnl >= 0 ? C.green : C.red }}>
+            <button key={i} disabled={!c} onClick={() => c && openForm(c.iso)} style={{ aspectRatio: "1", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "none", background: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.bg : c.pnl > 0 ? "rgba(127,176,105,0.2)" : "rgba(193,85,77,0.2)", color: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.faint : c.pnl > 0 ? C.green : C.red }}>
               {c && c.day}
             </button>
           ))}
@@ -1499,7 +1498,7 @@ function TradingPage() {
               <div key={e.id} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}`, paddingTop: i === 0 ? 0 : 18 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 12, color: C.faint }}>{fmtDate(e.date)}</span>
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: e.pnl >= 0 ? C.green : C.red }}>{money(e.pnl)}</span>
+                  {e.pnl != null && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: e.pnl === 0 ? C.faint : e.pnl > 0 ? C.green : C.red }}>{money(e.pnl)}</span>}
                 </div>
                 <div style={{ fontSize: 15, lineHeight: 1.6, color: C.textDim, whiteSpace: "pre-wrap" }}>{e.notes}</div>
               </div>
@@ -1548,7 +1547,7 @@ function LogSection({ entries, openForm, deleteEntry }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <button onClick={() => openForm(e.date)} style={{ fontSize: 11, color: C.faint, background: "none", border: "none" }}>{fmtDate(e.date)}</button>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: e.pnl >= 0 ? C.green : C.red }}>{money(e.pnl)}</span>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: e.pnl == null || e.pnl === 0 ? C.faint : e.pnl > 0 ? C.green : C.red }}>{e.pnl == null ? "—" : money(e.pnl)}</span>
                   <button onClick={() => deleteEntry(e.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
                 </div>
               </div>
