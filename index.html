@@ -56,7 +56,8 @@ const save = (key, value) => {
   catch (e) { console.error("save failed", key, e); }
 };
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const todayISO = () => localISO(new Date());
 const fmtDate = (iso) => new Date(iso + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 const money = (n) => (n < 0 ? "-$" : "$") + Math.abs(n).toFixed(2);
 const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
@@ -737,7 +738,7 @@ function HabitsPage() {
   const total = daysInMonth(now.getFullYear(), now.getMonth());
   const monthPrefix = today.slice(0, 7);
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-  const isCurrentWeek = weekDays.some((d) => d.toISOString().slice(0, 10) === today);
+  const isCurrentWeek = weekDays.some((d) => localISO(d) === today);
 
   const addHabit = () => { if (!newHabit.trim()) return; setHabits([...habits, { id: Date.now(), name: newHabit.trim(), log: {} }]); setNewHabit(""); setShowForm(false); };
   const toggleHabitDate = (id, iso) => setHabits(habits.map((h) => h.id === id ? { ...h, log: { ...h.log, [iso]: !h.log[iso] } } : h));
@@ -747,7 +748,7 @@ function HabitsPage() {
   const currentStreak = (h) => {
     let s = 0, d = new Date();
     while (true) {
-      const iso = d.toISOString().slice(0, 10);
+      const iso = localISO(d);
       if (h.log[iso]) { s++; d.setDate(d.getDate() - 1); } else break;
     }
     return s;
@@ -828,7 +829,7 @@ function HabitsPage() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr repeat(7, 22px)", gap: 4, marginBottom: 4, paddingLeft: 2 }}>
             <div />
             {weekDays.map((d, i) => {
-              const iso = d.toISOString().slice(0, 10);
+              const iso = localISO(d);
               const isToday = iso === today;
               return (
                 <div key={i} style={{ fontSize: 10, color: isToday ? C.gold : C.faint, textAlign: "center", fontWeight: isToday ? 600 : 400 }}>{dayLetters[i]}</div>
@@ -863,7 +864,7 @@ function HabitsPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr repeat(7, 22px)", gap: 4, alignItems: "center" }}>
                   <div />
                   {weekDays.map((d, i) => {
-                    const iso = d.toISOString().slice(0, 10);
+                    const iso = localISO(d);
                     const isToday = iso === today;
                     const checked = !!h.log[iso];
                     return (
@@ -1416,7 +1417,7 @@ function TradingPage() {
     if (!dates.length) return 0;
     let count = 0, cursor = new Date(dates[0] + "T00:00:00");
     for (let i = 0; i < dates.length + 1; i++) {
-      const iso = cursor.toISOString().slice(0, 10);
+      const iso = localISO(cursor);
       if (byDate[iso] !== undefined && byDate[iso] > 0) { count++; cursor.setDate(cursor.getDate() - 1); } else break;
     }
     return count;
