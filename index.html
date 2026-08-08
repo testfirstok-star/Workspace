@@ -86,6 +86,8 @@ function Icon({ name, size = 18, color = "currentColor", style }) {
     case "pencil": return <svg {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>;
     case "calendar": return <svg {...p}><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>;
     case "grip": return <svg {...p} fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.4" /><circle cx="15" cy="6" r="1.4" /><circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" /><circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" /></svg>;
+    case "settings": return <svg {...p}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>;
+    case "arrow-left": return <svg {...p}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>;
     default: return null;
   }
 }
@@ -500,7 +502,7 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
 
 // ============ HEALTH ============
 function HealthPage() {
-  const [data, setData] = useState(() => { const d = load("health-data", { water: {}, food: {}, glucose: {} }); return { water: d.water || {}, food: d.food || {}, glucose: d.glucose || {} }; });
+  const [data, setData] = useState(() => { const d = load("health-data", { water: {}, food: {}, glucose: {}, weight: {} }); return { water: d.water || {}, food: d.food || {}, glucose: d.glucose || {}, weight: d.weight || {} }; });
   const [foodName, setFoodName] = useState("");
   const [foodCal, setFoodCal] = useState("");
   const [viewDate, setViewDate] = useState(todayISO());
@@ -513,6 +515,7 @@ function HealthPage() {
   const foodVal = data.food[viewDate] || [];
   const calsVal = foodVal.reduce((s, f) => s + f.cal, 0);
   const glucoseVal = data.glucose[viewDate] || {};
+  const weightVal = data.weight[viewDate];
 
   const addWater = (delta) => setData({ ...data, water: { ...data.water, [viewDate]: Math.max(0, waterVal + delta) } });
   const addFood = () => {
@@ -527,6 +530,15 @@ function HealthPage() {
     const v = data.glucose[d];
     return v && (v.morning != null || v.afterLunch != null || v.afterDinner != null);
   }).sort();
+  const setWeight = (val) => setData({ ...data, weight: { ...data.weight, [viewDate]: val === "" ? undefined : Number(val) } });
+
+  const calsByDate = {};
+  Object.keys(data.food).forEach((d) => {
+    const sum = (data.food[d] || []).reduce((s, f) => s + f.cal, 0);
+    if (sum > 0) calsByDate[d] = sum;
+  });
+  const weightByDate = data.weight;
+  const progressDates = Array.from(new Set([...Object.keys(calsByDate), ...Object.keys(weightByDate).filter((d) => weightByDate[d] != null)])).sort();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
@@ -583,6 +595,22 @@ function HealthPage() {
             </div>
           ))}
         </div>
+      </Card>
+
+      <Card>
+        <SectionLabel>Weight{!isToday ? ` · ${fmtDate(viewDate)}` : ""}</SectionLabel>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+              Weight (kg)
+              {weightVal != null && <Icon name="check" size={11} color={C.green} />}
+            </div>
+            <TextInput type="number" value={weightVal ?? ""} onChange={(e) => setWeight(e.target.value)} placeholder="kg" />
+          </div>
+        </div>
+        {progressDates.length === 0
+          ? <EmptyState text="No weight or calorie data yet." />
+          : <ProgressChart dates={progressDates} calsByDate={calsByDate} weightByDate={weightByDate} />}
       </Card>
 
       <Card>
@@ -658,6 +686,7 @@ function GlucoseChart({ data, dates }) {
   const daySpacing = 46;
   const padTop = 10, padBottom = 22, height = 150;
   const width = Math.max(dates.length * daySpacing, 280);
+  const axisWidth = 32;
   const series = [
     { key: "morning", label: "Morning", color: C.gold },
     { key: "afterLunch", label: "Post-Lunch", color: C.blue },
@@ -672,6 +701,7 @@ function GlucoseChart({ data, dates }) {
   const xFor = (i) => i * daySpacing + daySpacing / 2;
   const pts = dates.map((d, i) => ({ i, v: data[d] ? data[d][active.key] : undefined })).filter((p) => p.v != null);
   const lineStr = pts.map((p) => `${xFor(p.i)},${yFor(p.v)}`).join(" ");
+  const axisTicks = [maxV, maxV - (maxV - minV) / 2, minV];
 
   return (
     <div>
@@ -692,11 +722,118 @@ function GlucoseChart({ data, dates }) {
       {pts.length === 0 ? (
         <EmptyState text={`No ${active.label.toLowerCase()} readings yet.`} />
       ) : (
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ display: "flex" }}>
+          <div style={{ position: "relative", width: axisWidth, height, flexShrink: 0 }}>
+            {axisTicks.map((v, i) => (
+              <div key={i} style={{ position: "absolute", top: yFor(v) - 6, right: 6, fontSize: 9, color: C.faint, fontFamily: "'JetBrains Mono', monospace" }}>
+                {Math.round(v)}
+              </div>
+            ))}
+          </div>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", flex: 1 }}>
+            <svg width={width} height={height}>
+              <rect x={0} y={yFor(140)} width={width} height={yFor(70) - yFor(140)} fill={C.green} opacity={0.08} />
+              {pts.length > 1 && <polyline points={lineStr} fill="none" stroke={active.color} strokeWidth={2} />}
+              {pts.map((p) => <circle key={p.i} cx={xFor(p.i)} cy={yFor(p.v)} r={3.5} fill={active.color} />)}
+              {dates.map((d, i) => (
+                <text key={d} x={xFor(i)} y={height - 6} fontSize={9} fill={C.faint} textAnchor="middle">
+                  {new Date(d + "T00:00:00").toLocaleDateString(undefined, { month: "numeric", day: "numeric" })}
+                </text>
+              ))}
+            </svg>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function shortNum(v) {
+  if (v >= 1000) { const k = v / 1000; return (k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)) + "k"; }
+  return String(v);
+}
+
+function ProgressChart({ dates, calsByDate, weightByDate }) {
+  const [tab, setTab] = useState("both");
+  const daySpacing = 46;
+  const padTop = 20, padBottom = 22, height = 190;
+  const width = Math.max(dates.length * daySpacing, 280);
+  const xFor = (i) => i * daySpacing + daySpacing / 2;
+  const barWidth = 16;
+  const axisWidth = 32;
+
+  const showWeight = tab === "both" || tab === "weight";
+  const showCals = tab === "both" || tab === "calories";
+
+  const weightVals = dates.map((d) => weightByDate[d]).filter((v) => v != null);
+  const wMin = weightVals.length ? Math.min(...weightVals) - 1 : 0;
+  const wMax = weightVals.length ? Math.max(...weightVals) + 1 : 1;
+  const yForWeight = (v) => padTop + (1 - (v - wMin) / (wMax - wMin || 1)) * (height - padTop - padBottom);
+  const weightTicks = [wMax, wMax - (wMax - wMin) / 2, wMin];
+
+  const calVals = dates.map((d) => calsByDate[d] || 0);
+  const cMax = Math.max(...calVals, 1) * 1.15;
+  const barHeightFor = (v) => (v / cMax) * (height - padTop - padBottom);
+
+  const weightPts = dates.map((d, i) => ({ i, v: weightByDate[d] })).filter((p) => p.v != null);
+  const lineStr = weightPts.map((p) => `${xFor(p.i)},${yForWeight(p.v)}`).join(" ");
+
+  const tabs = [
+    { id: "both", label: "Both" },
+    { id: "weight", label: "Weight" },
+    { id: "calories", label: "Calories" },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            style={{
+              flex: 1, fontSize: 12, padding: "8px 0", borderRadius: 999, border: `1px solid ${tab === t.id ? C.gold : C.border}`,
+              background: tab === t.id ? C.gold : "none", color: tab === t.id ? C.bg : C.muted, fontWeight: tab === t.id ? 600 : 400,
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 14, marginBottom: 10 }}>
+        {showWeight && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 999, background: C.gold }} />
+            <span style={{ fontSize: 11, color: C.muted }}>Weight (kg)</span>
+          </div>
+        )}
+        {showCals && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: C.blue }} />
+            <span style={{ fontSize: 11, color: C.muted }}>Calories</span>
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex" }}>
+        {showWeight && (
+          <div style={{ position: "relative", width: axisWidth, height, flexShrink: 0 }}>
+            {weightTicks.map((v, i) => (
+              <div key={i} style={{ position: "absolute", top: yForWeight(v) - 6, right: 6, fontSize: 9, color: C.faint, fontFamily: "'JetBrains Mono', monospace" }}>
+                {v.toFixed(1)}
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", flex: 1 }}>
           <svg width={width} height={height}>
-            <rect x={0} y={yFor(140)} width={width} height={yFor(70) - yFor(140)} fill={C.green} opacity={0.08} />
-            {pts.length > 1 && <polyline points={lineStr} fill="none" stroke={active.color} strokeWidth={2} />}
-            {pts.map((p) => <circle key={p.i} cx={xFor(p.i)} cy={yFor(p.v)} r={3.5} fill={active.color} />)}
+            {showCals && calVals.map((v, i) => v > 0 && (
+              <g key={i}>
+                <rect x={xFor(i) - barWidth / 2} y={height - padBottom - barHeightFor(v)} width={barWidth} height={barHeightFor(v)} fill={C.blue} opacity={0.35} rx={3} />
+                <text x={xFor(i)} y={height - padBottom - barHeightFor(v) - 5} fontSize={9} fill={C.blue} textAnchor="middle">{shortNum(v)}</text>
+              </g>
+            ))}
+            {showWeight && weightPts.length > 1 && <polyline points={lineStr} fill="none" stroke={C.gold} strokeWidth={2} />}
+            {showWeight && weightPts.map((p) => <circle key={p.i} cx={xFor(p.i)} cy={yForWeight(p.v)} r={3.5} fill={C.gold} />)}
             {dates.map((d, i) => (
               <text key={d} x={xFor(i)} y={height - 6} fontSize={9} fill={C.faint} textAnchor="middle">
                 {new Date(d + "T00:00:00").toLocaleDateString(undefined, { month: "numeric", day: "numeric" })}
@@ -704,7 +841,7 @@ function GlucoseChart({ data, dates }) {
             ))}
           </svg>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -719,19 +856,23 @@ function mondayOf(date) {
 function addDays(date, n) { const d = new Date(date); d.setDate(d.getDate() + n); return d; }
 
 function HabitsPage() {
-  const [habits, setHabits] = useState(() => {
-    let d = load("habits-data", { habits: [] });
+  const [data, setData] = useState(() => {
+    let d = load("habits-data", { habits: [], categoryColors: {} });
     if (!d.habits || d.habits.length === 0) {
       const old = load("health-data", { habits: [] });
-      if (old.habits && old.habits.length) d = { habits: old.habits };
+      if (old.habits && old.habits.length) d = { habits: old.habits, categoryColors: d.categoryColors || {} };
     }
-    return d.habits || [];
+    return { habits: d.habits || [], categoryColors: d.categoryColors || {} };
   });
-  const [newHabit, setNewHabit] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
 
-  useEffect(() => { save("habits-data", { habits }); }, [habits]);
+  useEffect(() => { save("habits-data", data); }, [data]);
+
+  const habits = data.habits;
+  const categoryColors = data.categoryColors;
+  const setHabits = (updater) => setData((d) => ({ ...d, habits: typeof updater === "function" ? updater(d.habits) : updater }));
 
   const today = todayISO();
   const now = new Date();
@@ -740,9 +881,30 @@ function HabitsPage() {
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const isCurrentWeek = weekDays.some((d) => localISO(d) === today);
 
-  const addHabit = () => { if (!newHabit.trim()) return; setHabits([...habits, { id: Date.now(), name: newHabit.trim(), log: {} }]); setNewHabit(""); setShowForm(false); };
-  const toggleHabitDate = (id, iso) => setHabits(habits.map((h) => h.id === id ? { ...h, log: { ...h.log, [iso]: !h.log[iso] } } : h));
-  const deleteHabit = (id) => setHabits(habits.filter((h) => h.id !== id));
+  const resetForm = () => { setEditingId(null); setShowForm(false); };
+  const startEditHabit = (h) => { setEditingId(h.id); setShowForm(true); };
+  const editingHabit = editingId ? habits.find((h) => h.id === editingId) : null;
+
+  const saveHabit = (fields) => {
+    setData((d) => {
+      let categoryColors = d.categoryColors;
+      if (fields.category && !categoryColors[fields.category]) {
+        const used = Object.keys(categoryColors);
+        categoryColors = { ...categoryColors, [fields.category]: COUNTDOWN_PALETTE[used.length % COUNTDOWN_PALETTE.length] };
+      }
+      let habits;
+      if (editingId) {
+        habits = d.habits.map((h) => (h.id === editingId ? { ...h, name: fields.name, category: fields.category || null } : h));
+      } else {
+        habits = [...d.habits, { id: Date.now(), name: fields.name, category: fields.category || null, log: {} }];
+      }
+      return { ...d, habits, categoryColors };
+    });
+    resetForm();
+  };
+
+  const toggleHabitDate = (id, iso) => setHabits((prev) => prev.map((h) => h.id === id ? { ...h, log: { ...h.log, [iso]: !h.log[iso] } } : h));
+  const deleteHabit = (id) => { setHabits((prev) => prev.filter((h) => h.id !== id)); if (editingId === id) resetForm(); };
   const monthCount = (h) => Object.keys(h.log).filter((d) => d.startsWith(monthPrefix) && h.log[d]).length;
 
   const currentStreak = (h) => {
@@ -777,6 +939,12 @@ function HabitsPage() {
 
   const dayLetters = ["M", "T", "W", "T", "F", "S", "S"];
 
+  const habitSections = Object.keys(categoryColors)
+    .map((cat) => ({ name: cat, color: categoryColors[cat], habits: habits.filter((h) => h.category === cat) }))
+    .filter((s) => s.habits.length > 0);
+  const uncategorized = habits.filter((h) => !h.category);
+  if (uncategorized.length > 0) habitSections.push({ name: "Uncategorized", color: C.faint, habits: uncategorized });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
       <PageTitle>Habits</PageTitle>
@@ -806,15 +974,12 @@ function HabitsPage() {
       <Card>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <SectionLabel>{now.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</SectionLabel>
-          <button onClick={() => setShowForm(!showForm)} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+          <button onClick={() => (showForm ? resetForm() : (setEditingId(null), setShowForm(true)))} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
             <Icon name={showForm ? "x" : "plus"} size={14} /> {showForm ? "Cancel" : "Add"}
           </button>
         </div>
         {showForm && (
-          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-            <TextInput value={newHabit} onChange={(e) => setNewHabit(e.target.value)} placeholder="Habit name" />
-            <button onClick={addHabit} style={{ background: C.gold, color: C.bg, borderRadius: 10, padding: "0 14px", border: "none" }}><Icon name="plus" size={16} /></button>
-          </div>
+          <HabitForm categoryColors={categoryColors} initial={editingHabit} onCancel={resetForm} onSubmit={saveHabit} />
         )}
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -826,7 +991,7 @@ function HabitsPage() {
         </div>
 
         {habits.length > 0 && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr repeat(7, 22px)", gap: 4, marginBottom: 4, paddingLeft: 2 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr repeat(7, 22px)", gap: 4, marginBottom: 14, paddingLeft: 2 }}>
             <div />
             {weekDays.map((d, i) => {
               const iso = localISO(d);
@@ -838,50 +1003,59 @@ function HabitsPage() {
           </div>
         )}
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {habits.length === 0 && <EmptyState text="No habits yet. Tap + to add one." />}
-          {habits.map((h) => {
-            const count = monthCount(h);
-            const streak = currentStreak(h);
-            const best = bestStreak(h);
-            return (
-              <div key={h.id} style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, color: C.text }}>{h.name}</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3 }}>
-                      {streak > 0 && (
-                        <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, color: C.gold }}>
-                          <Icon name="flame" size={11} color={C.gold} />{streak}d streak
-                        </span>
-                      )}
-                      {best > streak && best > 0 && <span style={{ fontSize: 11, color: C.faint }}>best {best}d</span>}
+        {habits.length === 0 && <EmptyState text="No habits yet. Tap + to add one." />}
+        {habitSections.map((section) => (
+          <div key={section.name} style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+              <div style={{ width: 8, height: 8, borderRadius: 999, background: section.color }} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>{section.name}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {section.habits.map((h) => {
+                const count = monthCount(h);
+                const streak = currentStreak(h);
+                const best = bestStreak(h);
+                return (
+                  <div key={h.id} style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, color: C.text }}>{h.name}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3 }}>
+                          {streak > 0 && (
+                            <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, color: C.gold }}>
+                              <Icon name="flame" size={11} color={C.gold} />{streak}d streak
+                            </span>
+                          )}
+                          {best > streak && best > 0 && <span style={{ fontSize: 11, color: C.faint }}>best {best}d</span>}
+                        </div>
+                      </div>
+                      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: C.muted }}>{count}/{total}</div>
+                      <button onClick={() => startEditHabit(h)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={13} /></button>
+                      <button onClick={() => deleteHabit(h.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr repeat(7, 22px)", gap: 4, alignItems: "center" }}>
+                      <div />
+                      {weekDays.map((d, i) => {
+                        const iso = localISO(d);
+                        const isToday = iso === today;
+                        const checked = !!h.log[iso];
+                        return (
+                          <button key={i} className="habit-check" onClick={() => toggleHabitDate(h.id, iso)} style={{
+                            width: 22, height: 22, borderRadius: 6, background: checked ? C.green : "none",
+                            border: `1px solid ${checked ? C.green : isToday ? C.gold : C.border}`,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                            {checked && <Icon name="check" size={12} color={C.bg} />}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
-                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: C.muted }}>{count}/{total}</div>
-                  <button onClick={() => deleteHabit(h.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr repeat(7, 22px)", gap: 4, alignItems: "center" }}>
-                  <div />
-                  {weekDays.map((d, i) => {
-                    const iso = localISO(d);
-                    const isToday = iso === today;
-                    const checked = !!h.log[iso];
-                    return (
-                      <button key={i} className="habit-check" onClick={() => toggleHabitDate(h.id, iso)} style={{
-                        width: 22, height: 22, borderRadius: 6, background: checked ? C.green : "none",
-                        border: `1px solid ${checked ? C.green : isToday ? C.gold : C.border}`,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        {checked && <Icon name="check" size={12} color={C.bg} />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </Card>
     </div>
   );
@@ -1362,6 +1536,53 @@ function CountdownCalendarGrid({ month, onMonthChange, items, entries, tagColors
   );
 }
 
+function HabitForm({ categoryColors, initial, onCancel, onSubmit }) {
+  const [name, setName] = useState(initial && initial.name ? initial.name : "");
+  const [category, setCategory] = useState(initial && initial.category ? initial.category : "");
+  const [newCatText, setNewCatText] = useState("");
+  const [addingCat, setAddingCat] = useState(false);
+
+  const submit = () => {
+    const finalCat = (addingCat && newCatText.trim()) ? newCatText.trim() : category;
+    if (!name.trim()) return;
+    onSubmit({ name: name.trim(), category: finalCat || null });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+      <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Habit name" style={{ border: "none", borderBottom: `1px solid ${C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Section</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {Object.keys(categoryColors).map((cat) => {
+            const active = !addingCat && category === cat;
+            return (
+              <button key={cat} onClick={() => { setCategory(cat); setAddingCat(false); }} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${active ? categoryColors[cat] : C.border}`, background: active ? categoryColors[cat] : "none", color: active ? C.bg : C.muted }}>
+                <div style={{ width: 6, height: 6, borderRadius: 999, background: active ? C.bg : categoryColors[cat] }} />
+                {cat}
+              </button>
+            );
+          })}
+          <button onClick={() => setAddingCat(!addingCat)} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${addingCat ? C.gold : C.border}`, background: addingCat ? C.gold : "none", color: addingCat ? C.bg : C.muted }}>
+            + New
+          </button>
+        </div>
+        {addingCat && (
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <TextInput value={newCatText} onChange={(e) => setNewCatText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} placeholder="New section name" style={{ flex: 1 }} />
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <GoldButton onClick={submit}>{initial && initial.id ? "Save changes" : "Add habit"}</GoldButton>
+        {onCancel && (
+          <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============ TRADING ============
 function TradingPage() {
   const [data, setData] = useState(() => {
@@ -1826,7 +2047,7 @@ const CHEATSHEET_IMG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
 // ============ BACKUP (real file download) ============
 function downloadBackup() {
-  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data"];
+  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data"];
   const out = {};
   keys.forEach((k) => { out[k] = load(k, null); });
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
@@ -1847,7 +2068,7 @@ function RestoreModal({ onClose }) {
     setStatus("working");
     try {
       const parsed = JSON.parse(jsonText);
-      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data"];
+      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data"];
       keys.forEach((k) => { if (parsed[k] !== undefined && parsed[k] !== null) save(k, parsed[k]); });
       setStatus("done");
       setTimeout(() => window.location.reload(), 900);
@@ -1885,25 +2106,142 @@ function RestoreModal({ onClose }) {
   );
 }
 
+// ============ SETTINGS ============
+function SettingsPage({ tabs, hiddenTabs, toggleTabHidden, reorderTab, onBack }) {
+  const visibleCount = tabs.length - hiddenTabs.length;
+  const [dragId, setDragId] = useState(null);
+  const [dragY, setDragY] = useState(0);
+  const dragInfo = useRef({});
+  const lastIndexRef = useRef(0);
+  const ROW_HEIGHT = 44;
+
+  const onHandlePointerDown = (e, id, idx) => {
+    e.preventDefault();
+    dragInfo.current = { startY: e.clientY, order: tabs.map((t) => t.id), originalIndex: idx };
+    lastIndexRef.current = idx;
+    setDragId(id); setDragY(0);
+
+    const move = (ev) => {
+      const dy = ev.clientY - dragInfo.current.startY;
+      setDragY(dy);
+      const shift = Math.round(dy / ROW_HEIGHT);
+      const newIndex = Math.max(0, Math.min(dragInfo.current.order.length - 1, dragInfo.current.originalIndex + shift));
+      if (newIndex !== lastIndexRef.current) {
+        lastIndexRef.current = newIndex;
+        reorderTab(id, newIndex);
+      }
+    };
+    const up = () => {
+      setDragId(null); setDragY(0);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button onClick={onBack} style={{ color: C.muted, background: "none", border: "none", display: "flex", alignItems: "center" }}>
+          <Icon name="arrow-left" size={20} />
+        </button>
+        <PageTitle>Settings</PageTitle>
+      </div>
+      <Card>
+        <SectionLabel>Pages</SectionLabel>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 6, marginBottom: 14, lineHeight: 1.5 }}>
+          Uncheck a page to hide it from the bottom navigation, or drag the handle to reorder. At least one page must stay visible.
+        </div>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {tabs.map((t, idx) => {
+            const isHidden = hiddenTabs.includes(t.id);
+            const isLastVisible = !isHidden && visibleCount === 1;
+            const isDragging = dragId === t.id;
+            return (
+              <div key={t.id} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 0",
+                position: "relative", background: isDragging ? C.panel : "transparent",
+                transform: isDragging ? `translateY(${dragY}px)` : "none",
+                zIndex: isDragging ? 5 : 1, boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
+                borderRadius: isDragging ? 8 : 0, touchAction: "none",
+              }}>
+                <div onPointerDown={(e) => onHandlePointerDown(e, t.id, idx)} style={{ color: C.faint, cursor: "grab", touchAction: "none", display: "flex" }}>
+                  <Icon name="grip" size={16} />
+                </div>
+                <button onClick={() => !isLastVisible && toggleTabHidden(t.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "none", border: "none", opacity: isLastVisible ? 0.5 : 1, flex: 1 }}>
+                  <div style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: !isHidden ? C.gold : "none", border: `1px solid ${!isHidden ? C.gold : C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {!isHidden && <Icon name="check" size={13} color={C.bg} />}
+                  </div>
+                  <Icon name={t.icon} size={17} color={C.muted} />
+                  <span style={{ fontSize: 14, color: C.text }}>{t.label}</span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // ============ APP ROOT ============
+const TAB_DEFS = [
+  { id: "trend", label: "Trend", icon: "gauge" },
+  { id: "work", label: "Work", icon: "check-square" },
+  { id: "health", label: "Health", icon: "heart" },
+  { id: "habits", label: "Habits", icon: "list-checks" },
+  { id: "trading", label: "Trading", icon: "trending-up" },
+  { id: "countdown", label: "Countdown", icon: "calendar" },
+];
+
 function App() {
   const [tab, setTab] = useState("trend");
   const [showRestore, setShowRestore] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [lastBackupTs, setLastBackupTs] = useState(() => load("last-backup-ts", null));
+  const [hiddenTabs, setHiddenTabs] = useState(() => load("settings-data", { hiddenTabs: [], tabOrder: [] }).hiddenTabs || []);
+  const [tabOrder, setTabOrder] = useState(() => {
+    const stored = load("settings-data", { hiddenTabs: [], tabOrder: [] }).tabOrder || [];
+    const validIds = TAB_DEFS.map((t) => t.id);
+    const filtered = stored.filter((id) => validIds.includes(id));
+    const missing = validIds.filter((id) => !filtered.includes(id));
+    return [...filtered, ...missing];
+  });
+
+  useEffect(() => { save("settings-data", { hiddenTabs, tabOrder }); }, [hiddenTabs, tabOrder]);
 
   const daysSinceBackup = lastBackupTs ? Math.floor((Date.now() - lastBackupTs) / 86400000) : null;
   const needsBackup = daysSinceBackup === null || daysSinceBackup >= 7;
 
   const doBackup = () => { downloadBackup(); setLastBackupTs(Date.now()); };
 
-  const tabs = [
-    { id: "trend", label: "Trend", icon: "gauge" },
-    { id: "work", label: "Work", icon: "check-square" },
-    { id: "health", label: "Health", icon: "heart" },
-    { id: "habits", label: "Habits", icon: "list-checks" },
-    { id: "trading", label: "Trading", icon: "trending-up" },
-    { id: "countdown", label: "Countdown", icon: "calendar" },
-  ];
+  const tabs = tabOrder.map((id) => TAB_DEFS.find((t) => t.id === id)).filter(Boolean);
+  const visibleTabs = tabs.filter((t) => !hiddenTabs.includes(t.id));
+
+  const toggleTabHidden = (id) => {
+    setHiddenTabs((prev) => {
+      const isHidden = prev.includes(id);
+      const nextVisibleCount = tabs.length - prev.length + (isHidden ? 1 : -1);
+      if (!isHidden && nextVisibleCount < 1) return prev;
+      return isHidden ? prev.filter((x) => x !== id) : [...prev, id];
+    });
+  };
+
+  const reorderTab = (id, newIndex) => {
+    setTabOrder((prev) => {
+      const ids = [...prev];
+      const fromIndex = ids.indexOf(id);
+      if (fromIndex === -1) return prev;
+      ids.splice(fromIndex, 1);
+      ids.splice(newIndex, 0, id);
+      return ids;
+    });
+  };
+
+  useEffect(() => {
+    if (hiddenTabs.includes(tab) && visibleTabs.length > 0) setTab(visibleTabs[0].id);
+  }, [hiddenTabs]);
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: "'Inter', sans-serif" }}>
@@ -1914,6 +2252,9 @@ function App() {
             <span style={{ fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", color: C.muted }}>Workspace</span>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setShowSettings(true)} style={{ display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 999, width: 30, height: 30, background: "none" }}>
+              <Icon name="settings" size={14} />
+            </button>
             <button onClick={() => setShowRestore(true)} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 999, padding: "6px 12px", background: "none" }}>
               <Icon name="refresh" size={12} /> Restore
             </button>
@@ -1922,7 +2263,7 @@ function App() {
             </button>
           </div>
         </div>
-        {needsBackup && (
+        {needsBackup && !showSettings && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: C.bg, border: `1px solid ${C.gold}`, borderRadius: 10, padding: "10px 12px", marginBottom: 16 }}>
             <span style={{ fontSize: 12, color: C.textDim, lineHeight: 1.4 }}>
               {daysSinceBackup === null ? "You haven't backed up yet." : `It's been ${daysSinceBackup} days since your last backup.`}
@@ -1932,26 +2273,34 @@ function App() {
             </button>
           </div>
         )}
-        {tab === "work" && <WorkPage />}
-        {tab === "health" && <HealthPage />}
-        {tab === "habits" && <HabitsPage />}
-        {tab === "trading" && <TradingPage />}
-        {tab === "trend" && <TrendPage />}
-        {tab === "countdown" && <CountdownPage />}
+        {showSettings ? (
+          <SettingsPage tabs={tabs} hiddenTabs={hiddenTabs} toggleTabHidden={toggleTabHidden} reorderTab={reorderTab} onBack={() => setShowSettings(false)} />
+        ) : (
+          <>
+            {tab === "work" && <WorkPage />}
+            {tab === "health" && <HealthPage />}
+            {tab === "habits" && <HabitsPage />}
+            {tab === "trading" && <TradingPage />}
+            {tab === "trend" && <TrendPage />}
+            {tab === "countdown" && <CountdownPage />}
+          </>
+        )}
       </div>
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(11,13,16,0.95)", backdropFilter: "blur(8px)", borderTop: `1px solid ${C.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
-        <div style={{ maxWidth: 448, margin: "0 auto", display: "flex" }}>
-          {tabs.map((t) => {
-            const active = tab === t.id;
-            return (
-              <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "12px 0", background: "none", border: "none" }}>
-                <Icon name={t.icon} size={19} color={active ? C.gold : C.faint} style={{ strokeWidth: active ? 2.2 : 1.8 }} />
-                <span style={{ fontSize: 9.5, color: active ? C.gold : C.faint }}>{t.label}</span>
-              </button>
-            );
-          })}
+      {!showSettings && (
+        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(11,13,16,0.95)", backdropFilter: "blur(8px)", borderTop: `1px solid ${C.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
+          <div style={{ maxWidth: 448, margin: "0 auto", display: "flex" }}>
+            {visibleTabs.map((t) => {
+              const active = tab === t.id;
+              return (
+                <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "12px 0", background: "none", border: "none" }}>
+                  <Icon name={t.icon} size={19} color={active ? C.gold : C.faint} style={{ strokeWidth: active ? 2.2 : 1.8 }} />
+                  <span style={{ fontSize: 9.5, color: active ? C.gold : C.faint }}>{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
       <div style={{ height: 80 }} />
       {showRestore && <RestoreModal onClose={() => setShowRestore(false)} />}
     </div>
