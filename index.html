@@ -621,21 +621,21 @@ function HealthPage() {
               Morning
               {glucoseVal.morning != null && <Icon name="check" size={11} color={C.green} />}
             </div>
-            <TextInput type="number" value={glucoseVal.morning ?? ""} onChange={(e) => setGlucose("morning", e.target.value)} placeholder="mg/dL" />
+            <TextInput type="number" value={glucoseVal.morning ?? ""} onChange={(e) => setGlucose("morning", e.target.value)} placeholder="mmol/L" />
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
               Post-Lunch
               {glucoseVal.afterLunch != null && <Icon name="check" size={11} color={C.green} />}
             </div>
-            <TextInput type="number" value={glucoseVal.afterLunch ?? ""} onChange={(e) => setGlucose("afterLunch", e.target.value)} placeholder="mg/dL" />
+            <TextInput type="number" value={glucoseVal.afterLunch ?? ""} onChange={(e) => setGlucose("afterLunch", e.target.value)} placeholder="mmol/L" />
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
               Post-Dinner
               {glucoseVal.afterDinner != null && <Icon name="check" size={11} color={C.green} />}
             </div>
-            <TextInput type="number" value={glucoseVal.afterDinner ?? ""} onChange={(e) => setGlucose("afterDinner", e.target.value)} placeholder="mg/dL" />
+            <TextInput type="number" value={glucoseVal.afterDinner ?? ""} onChange={(e) => setGlucose("afterDinner", e.target.value)} placeholder="mmol/L" />
           </div>
         </div>
         {glucoseDates.length === 0
@@ -695,8 +695,8 @@ function GlucoseChart({ data, dates }) {
   const active = series.find((s) => s.key === tab);
   const values = [];
   dates.forEach((d) => { const v = data[d] && data[d][active.key]; if (v != null) values.push(v); });
-  const minV = Math.min(60, ...values) - 10;
-  const maxV = Math.max(200, ...values) + 10;
+  const minV = Math.min(4, ...values) - 1;
+  const maxV = Math.max(10, ...values) + 1;
   const yFor = (v) => padTop + (1 - (v - minV) / (maxV - minV)) * (height - padTop - padBottom);
   const xFor = (i) => i * daySpacing + daySpacing / 2;
   const pts = dates.map((d, i) => ({ i, v: data[d] ? data[d][active.key] : undefined })).filter((p) => p.v != null);
@@ -719,6 +719,10 @@ function GlucoseChart({ data, dates }) {
           </button>
         ))}
       </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+        <div style={{ width: 10, height: 6, borderRadius: 2, background: C.green, opacity: 0.5 }} />
+        <span style={{ fontSize: 10, color: C.faint }}>4.0–7.8 mmol/L target range</span>
+      </div>
       {pts.length === 0 ? (
         <EmptyState text={`No ${active.label.toLowerCase()} readings yet.`} />
       ) : (
@@ -726,13 +730,13 @@ function GlucoseChart({ data, dates }) {
           <div style={{ position: "relative", width: axisWidth, height, flexShrink: 0 }}>
             {axisTicks.map((v, i) => (
               <div key={i} style={{ position: "absolute", top: yFor(v) - 6, right: 6, fontSize: 9, color: C.faint, fontFamily: "'JetBrains Mono', monospace" }}>
-                {Math.round(v)}
+                {v.toFixed(1)}
               </div>
             ))}
           </div>
           <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", flex: 1 }}>
             <svg width={width} height={height}>
-              <rect x={0} y={yFor(140)} width={width} height={yFor(70) - yFor(140)} fill={C.green} opacity={0.08} />
+              <rect x={0} y={yFor(7.8)} width={width} height={yFor(4) - yFor(7.8)} fill={C.green} opacity={0.1} />
               {pts.length > 1 && <polyline points={lineStr} fill="none" stroke={active.color} strokeWidth={2} />}
               {pts.map((p) => <circle key={p.i} cx={xFor(p.i)} cy={yFor(p.v)} r={3.5} fill={active.color} />)}
               {dates.map((d, i) => (
