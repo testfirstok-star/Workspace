@@ -1112,6 +1112,7 @@ function CountdownPage() {
   const [colorPickerTag, setColorPickerTag] = useState(null);
   const [logOpen, setLogOpen] = useState(true);
   const [logFilter, setLogFilter] = useState(null);
+  const [pastOpen, setPastOpen] = useState(false);
 
   useEffect(() => { save("countdown-data", data); }, [data]);
 
@@ -1177,8 +1178,9 @@ function CountdownPage() {
   });
   const upcoming = withDays.filter((it) => it.days >= 0).sort((a, b) => a.days - b.days);
   const past = withDays.filter((it) => it.days < 0).sort((a, b) => b.days - a.days);
-  let listItems = [...upcoming, ...past];
-  if (activeFilter) listItems = listItems.filter((it) => it.tag === activeFilter);
+  let listItems = upcoming;
+  let pastItems = past;
+  if (activeFilter) { listItems = listItems.filter((it) => it.tag === activeFilter); pastItems = pastItems.filter((it) => it.tag === activeFilter); }
 
   const startEdit = (it) => {
     setEditingId(it.id); setShowForm(true);
@@ -1234,7 +1236,7 @@ function CountdownPage() {
                   {it.tag}{it.recurrence !== "none" ? ` · ${it.recurrence}` : ""}
                 </div>
               </div>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: it.days < 0 ? C.faint : it.days <= 7 ? C.gold : C.textDim, flexShrink: 0, marginTop: 2 }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: it.days <= 7 ? C.gold : C.textDim, flexShrink: 0, marginTop: 2 }}>
                 {daysLabel(it.days)}
               </div>
               <button onClick={() => startEdit(it)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
@@ -1242,6 +1244,35 @@ function CountdownPage() {
             </div>
           ))}
         </div>
+
+        {pastItems.length > 0 && (
+          <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+            <button onClick={() => setPastOpen(!pastOpen)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+              <span style={{ fontSize: 12, color: C.muted }}>Passed ({pastItems.length})</span>
+              <Icon name={pastOpen ? "chevron-left" : "chevron-right"} size={13} color={C.muted} style={{ transform: pastOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+            </button>
+            {pastOpen && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10, maxHeight: 240, overflowY: "auto" }}>
+                {pastItems.map((it) => (
+                  <div key={it.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0" }}>
+                    <div style={{ marginTop: 5, width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: tagColorFor(it.tag, data.tagColors) }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, color: C.faint }}>{it.title}</div>
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                        {it.tag}{it.recurrence !== "none" ? ` · ${it.recurrence}` : ""}
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: C.faint, flexShrink: 0, marginTop: 2 }}>
+                      {daysLabel(it.days)}
+                    </div>
+                    <button onClick={() => startEdit(it)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
+                    <button onClick={() => deleteItem(it.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Card>
 
       <Card>
