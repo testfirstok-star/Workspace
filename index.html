@@ -546,8 +546,10 @@ function HealthPage() {
 
       <Card>
         <SectionLabel>Viewing</SectionLabel>
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={() => setViewDate(localISO(addDays(new Date(viewDate + "T00:00:00"), -1)))} style={iconBtnStyle}><Icon name="chevron-left" size={18} /></button>
           <div style={{ flex: 1 }}><DateField value={viewDate} onChange={setViewDate} /></div>
+          <button onClick={() => setViewDate(localISO(addDays(new Date(viewDate + "T00:00:00"), 1)))} style={iconBtnStyle}><Icon name="chevron-right" size={18} /></button>
           {!isToday && <button onClick={() => setViewDate(todayISO())} style={{ fontSize: 12, color: C.gold, background: "none", border: `1px solid ${C.border}`, borderRadius: 999, padding: "8px 14px", whiteSpace: "nowrap" }}>Today</button>}
         </div>
       </Card>
@@ -1618,6 +1620,475 @@ function HabitForm({ categoryColors, initial, onCancel, onSubmit }) {
   );
 }
 
+// ============ FASTING ============
+const GOAL_PRESETS = [
+  { label: "16:8", hours: 16 },
+  { label: "18:6", hours: 18 },
+  { label: "20:4", hours: 20 },
+  { label: "OMAD", hours: 23 },
+];
+
+const FASTING_PRESTAGE = { label: "Digesting", desc: "Your last meal is still digesting. Blood sugar and insulin are elevated." };
+const FASTING_MILESTONES = [
+  { hours: 4, label: "Glucose declining", desc: "Blood glucose is trending down as your last meal clears your system." },
+  { hours: 8, label: "Insulin dropping", desc: "Insulin continues to fall \u2014 your body is starting to lean less on glucose." },
+  { hours: 12, label: "Fat-burning begins", desc: "Glycogen stores are running low. Your body is shifting toward burning fat for fuel." },
+  { hours: 16, label: "Ketosis starting", desc: "Fat is now a major fuel source. Ketone production is ramping up." },
+  { hours: 18, label: "Autophagy rising", desc: "Cells are starting to clear out damaged components \u2014 your body's own repair process." },
+  { hours: 20, label: "Fat-burning in full swing", desc: "Fat is your primary energy source now. Hunger often peaks around here, then eases." },
+  { hours: 24, label: "Full day fasted", desc: "A complete day fasted. Autophagy and cellular repair are running strong." },
+  { hours: 36, label: "Growth hormone surge", desc: "Extended fast. Growth hormone can rise significantly here, helping preserve muscle." },
+  { hours: 48, label: "Two days fasted", desc: "Autophagy and immune cell renewal are at their strongest point." },
+];
+
+function currentMilestone(hours) {
+  let cur = null, next = null;
+  for (const m of FASTING_MILESTONES) {
+    if (hours >= m.hours) cur = m; else { next = m; break; }
+  }
+  return { cur, next };
+}
+
+function nowDateTimeLocal() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function toDateTimeLocal(iso) {
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fmtDateTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+function fmtDuration(ms) {
+  const totalMin = Math.max(0, Math.floor(ms / 60000));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${h}h ${m}m`;
+}
+function fmtDurationHMS(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+function DateTimeField({ value, onChange }) {
+  return (
+    <input
+      type="datetime-local"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={{
+        width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10,
+        padding: "10px 12px", color: C.text, fontSize: 14, fontFamily: "'Inter', sans-serif",
+        colorScheme: "dark", boxSizing: "border-box",
+      }}
+    />
+  );
+}
+
+function FastingPage() {
+  const [data, setData] = useState(() => load("fasting-data", { active: null, history: [] }));
+  useEffect(() => { save("fasting-data", data); }, [data]);
+
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const [showStartForm, setShowStartForm] = useState(false);
+  const [showEndForm, setShowEndForm] = useState(false);
+  const [editingStart, setEditingStart] = useState(false);
+  const [showLogPast, setShowLogPast] = useState(false);
+  const [editingHistoryId, setEditingHistoryId] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const active = data.active;
+  const startFast = (startISO, goalHours) => { setData((d) => ({ ...d, active: { id: Date.now(), start: startISO, goalHours } })); setShowStartForm(false); };
+  const endFast = (endISO) => {
+    setData((d) => {
+      if (!d.active) return d;
+      const entry = { id: d.active.id, start: d.active.start, end: endISO, goalHours: d.active.goalHours };
+      return { ...d, active: null, history: [entry, ...d.history] };
+    });
+    setShowEndForm(false);
+  };
+  const updateActiveStart = (startISO) => { setData((d) => ({ ...d, active: { ...d.active, start: startISO } })); setEditingStart(false); };
+  const updateHistoryEntry = (id, fields) => { setData((d) => ({ ...d, history: d.history.map((h) => (h.id === id ? { ...h, ...fields } : h)) })); setEditingHistoryId(null); };
+  const deleteHistoryEntry = (id) => setData((d) => ({ ...d, history: d.history.filter((h) => h.id !== id) }));
+  const logPastFast = (fields) => { setData((d) => ({ ...d, history: [{ id: Date.now(), ...fields }, ...d.history] })); setShowLogPast(false); };
+
+  const elapsedMs = active ? now - new Date(active.start).getTime() : 0;
+  const elapsedHours = elapsedMs / 3600000;
+  const goalMs = active ? active.goalHours * 3600000 : 0;
+  const pct = active ? Math.min(1, elapsedMs / goalMs) : 0;
+  const isOvertime = active && elapsedMs > goalMs;
+  const needsNudge = active && elapsedHours > Math.max(active.goalHours * 1.5, 20);
+  const ringColor = isOvertime ? C.green : C.gold;
+
+  const milestoneInfo = active ? currentMilestone(elapsedHours) : { cur: null, next: null };
+
+  const sortedHistory = [...data.history].sort((a, b) => b.end.localeCompare(a.end));
+  const streak = (() => {
+    let s = 0;
+    for (const h of sortedHistory) {
+      const dur = new Date(h.end).getTime() - new Date(h.start).getTime();
+      if (dur >= h.goalHours * 3600000) s++; else break;
+    }
+    return s;
+  })();
+  const bestStreak = (() => {
+    let best = 0, run = 0;
+    const chron = [...data.history].sort((a, b) => a.end.localeCompare(b.end));
+    chron.forEach((h) => {
+      const dur = new Date(h.end).getTime() - new Date(h.start).getTime();
+      const hit = dur >= h.goalHours * 3600000;
+      run = hit ? run + 1 : 0;
+      if (run > best) best = run;
+    });
+    return Math.max(best, streak);
+  })();
+
+  const lastFast = sortedHistory[0];
+  const lastMealTarget = data.lastMealTarget || "20:00";
+  const setLastMealTarget = (val) => setData((d) => ({ ...d, lastMealTarget: val }));
+  const targetDate = (() => {
+    const [h, m] = lastMealTarget.split(":").map(Number);
+    const t = new Date();
+    t.setHours(h, m, 0, 0);
+    return t;
+  })();
+  const targetRemain = !active ? targetDate.getTime() - now : null;
+  const pastMealTarget = !active && targetRemain <= 0;
+  const eatingPct = !active ? (() => {
+    const anchor = lastFast ? new Date(lastFast.end).getTime() : new Date(new Date().setHours(0, 0, 0, 0)).getTime();
+    const span = targetDate.getTime() - anchor;
+    if (span <= 0) return 1;
+    return Math.min(1, Math.max(0, (now - anchor) / span));
+  })() : 0;
+
+  const RADIUS = 84;
+  const CIRC = 2 * Math.PI * RADIUS;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+      <PageTitle>Fasting</PageTitle>
+
+      {needsNudge && (
+        <Card style={{ border: `1px solid ${C.gold}` }}>
+          <div style={{ fontSize: 13, color: C.textDim, lineHeight: 1.5, marginBottom: 10 }}>
+            This fast has been running since {fmtDateTime(active.start)} \u2014 still going, or did you forget to end it?
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <GoldButton onClick={() => endFast(nowDateTimeLocal())}>End now</GoldButton>
+            <button onClick={() => setShowEndForm(true)} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Edit end time</button>
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 0 4px" }}>
+          <div style={{ position: "relative", width: 200, height: 200 }}>
+            <svg width="200" height="200" viewBox="0 0 200 200" style={{ transform: "rotate(-90deg)" }}>
+              <circle cx="100" cy="100" r={RADIUS} fill="none" stroke={C.border} strokeWidth="10" />
+              <circle cx="100" cy="100" r={RADIUS} fill="none" stroke={active ? ringColor : (pastMealTarget ? C.red : C.gold)} strokeWidth="10" strokeLinecap="round"
+                strokeDasharray={CIRC} strokeDashoffset={active ? CIRC * (1 - pct) : CIRC * (1 - eatingPct)}
+                style={{ transition: "stroke-dashoffset 0.4s ease" }} />
+            </svg>
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 26, color: active ? C.text : (pastMealTarget ? C.red : C.text) }}>
+                {active ? fmtDurationHMS(elapsedMs) : fmtDurationHMS(Math.abs(targetRemain))}
+              </div>
+              <div style={{ fontSize: 12, color: active ? C.muted : (pastMealTarget ? C.red : C.muted), marginTop: 4 }}>
+                {active
+                  ? (isOvertime ? `+${fmtDuration(elapsedMs - goalMs)} over ${active.goalHours}h` : `of ${active.goalHours}h goal`)
+                  : (pastMealTarget ? "past your last meal time" : "until last meal")}
+              </div>
+            </div>
+          </div>
+
+          {isOvertime && (
+            <div style={{ marginTop: 10, fontSize: 12, color: C.green, fontWeight: 500, textAlign: "center" }}>
+              Goal hit \u2014 keep going or end whenever you're ready
+            </div>
+          )}
+
+          {active && (
+            <div style={{ marginTop: 14, textAlign: "center" }}>
+              {editingStart ? (
+                <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "center" }}>
+                  <StartTimeEditor initial={toDateTimeLocal(active.start)} onCancel={() => setEditingStart(false)} onSubmit={updateActiveStart} />
+                </div>
+              ) : (
+                <button onClick={() => setEditingStart(true)} style={{ fontSize: 11, color: C.faint, background: "none", border: "none" }}>
+                  Started {fmtDateTime(active.start)} · edit
+                </button>
+              )}
+            </div>
+          )}
+
+          {active && (
+            <div style={{ marginTop: 14, textAlign: "center", padding: "0 12px" }}>
+              <div style={{ fontSize: 13, color: C.gold, fontWeight: 500 }}>
+                {milestoneInfo.cur ? milestoneInfo.cur.label : FASTING_PRESTAGE.label}
+              </div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 3, lineHeight: 1.4 }}>
+                {milestoneInfo.cur ? milestoneInfo.cur.desc : FASTING_PRESTAGE.desc}
+              </div>
+              {milestoneInfo.next ? (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 11, color: C.faint }}>
+                    {fmtDuration(milestoneInfo.next.hours * 3600000 - elapsedMs)} until <span style={{ color: C.textDim }}>{milestoneInfo.next.label}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: C.muted, marginTop: 3, lineHeight: 1.4 }}>{milestoneInfo.next.desc}</div>
+                </div>
+              ) : milestoneInfo.cur && (
+                <div style={{ fontSize: 11, color: C.faint, marginTop: 6 }}>You've reached the final tracked stage \u2014 incredible endurance.</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {!active && !showStartForm && (
+          <GoldButton onClick={() => setShowStartForm(true)}>Start Fast</GoldButton>
+        )}
+        {!active && showStartForm && (
+          <StartFastForm onCancel={() => setShowStartForm(false)} onSubmit={startFast} />
+        )}
+        {active && !showEndForm && (
+          <button onClick={() => setShowEndForm(true)} style={{ width: "100%", background: C.red, color: "#fff", border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 600 }}>
+            End Fast
+          </button>
+        )}
+        {active && showEndForm && (
+          <EndFastForm onCancel={() => setShowEndForm(false)} onSubmit={endFast} />
+        )}
+      </Card>
+
+      {!active && (
+        <Card>
+          <SectionLabel>Eating Window</SectionLabel>
+          {lastFast && (
+            <div style={{ fontSize: 13, color: C.textDim, marginTop: 8 }}>
+              Last fast: {fmtDuration(new Date(lastFast.end) - new Date(lastFast.start))} \u00b7 goal was {lastFast.goalHours}h
+              {" \u00b7 "}
+              <span style={{ color: (new Date(lastFast.end) - new Date(lastFast.start)) >= lastFast.goalHours * 3600000 ? C.green : C.faint }}>
+                {(new Date(lastFast.end) - new Date(lastFast.start)) >= lastFast.goalHours * 3600000 ? "Goal hit" : "Under goal"}
+              </span>
+            </div>
+          )}
+          <div style={{ marginTop: lastFast ? 14 : 6 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Last meal by</div>
+            <input
+              type="time"
+              value={lastMealTarget}
+              onChange={(e) => setLastMealTarget(e.target.value)}
+              style={{
+                background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10,
+                padding: "10px 12px", color: C.text, fontSize: 14, fontFamily: "'JetBrains Mono', monospace",
+                colorScheme: "dark", boxSizing: "border-box",
+              }}
+            />
+            {targetRemain > 0 ? (
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+                {fmtDuration(targetRemain)} left until your last meal time
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: C.faint, marginTop: 8 }}>Past today's target time.</div>
+            )}
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <SectionLabel>Streak</SectionLabel>
+        <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+          <div style={{ flex: 1, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Current</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, marginTop: 4 }}>
+              {streak > 0 && <Icon name="flame" size={14} color={C.gold} />}
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 20, color: C.gold }}>{streak}</span>
+            </div>
+          </div>
+          <div style={{ flex: 1, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Best</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 20, color: C.textDim, marginTop: 4 }}>{bestStreak}</div>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <button onClick={() => setHistoryOpen(!historyOpen)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+          <SectionLabel>History ({sortedHistory.length})</SectionLabel>
+          <Icon name={historyOpen ? "chevron-left" : "chevron-right"} size={14} color={C.muted} style={{ transform: historyOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+        </button>
+        {historyOpen && (
+          <div style={{ marginTop: 12 }}>
+            <button onClick={() => setShowLogPast(!showLogPast)} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none", marginBottom: 12 }}>
+              <Icon name={showLogPast ? "x" : "plus"} size={14} /> {showLogPast ? "Cancel" : "Log a past fast"}
+            </button>
+            {showLogPast && <PastFastForm onCancel={() => setShowLogPast(false)} onSubmit={logPastFast} />}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+              {sortedHistory.length === 0 && <EmptyState text="No fasts logged yet." />}
+              {sortedHistory.map((h, i) => {
+                const dur = new Date(h.end) - new Date(h.start);
+                const hit = dur >= h.goalHours * 3600000;
+                const isEditing = editingHistoryId === h.id;
+                return (
+                  <div key={h.id} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}`, paddingTop: i === 0 ? 0 : 10 }}>
+                    {isEditing ? (
+                      <PastFastForm initial={h} onCancel={() => setEditingHistoryId(null)} onSubmit={(fields) => updateHistoryEntry(h.id, fields)} />
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: hit ? C.green : C.faint }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, color: C.text }}>{fmtDuration(dur)} <span style={{ color: C.faint }}>· goal {h.goalHours}h</span></div>
+                          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{fmtDateTime(h.start)} \u2192 {fmtDateTime(h.end)}</div>
+                        </div>
+                        <button onClick={() => setEditingHistoryId(h.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
+                        <button onClick={() => deleteHistoryEntry(h.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function StartTimeEditor({ initial, onCancel, onSubmit }) {
+  const [val, setVal] = useState(initial);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+      <DateTimeField value={val} onChange={setVal} />
+      <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+        <button onClick={() => onSubmit(val)} style={{ fontSize: 12, color: C.bg, background: C.gold, border: "none", borderRadius: 8, padding: "6px 14px", fontWeight: 600 }}>Save</button>
+        <button onClick={onCancel} style={{ fontSize: 12, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 14px" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function StartFastForm({ onCancel, onSubmit }) {
+  const [goalHours, setGoalHours] = useState(16);
+  const [customHours, setCustomHours] = useState("");
+  const [usingCustom, setUsingCustom] = useState(false);
+  const [startTime, setStartTime] = useState(nowDateTimeLocal());
+
+  const submit = () => {
+    const g = usingCustom ? Number(customHours) : goalHours;
+    if (!g || g <= 0) return;
+    onSubmit(startTime, g);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Goal</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {GOAL_PRESETS.map((p) => (
+            <button key={p.label} onClick={() => { setGoalHours(p.hours); setUsingCustom(false); }} style={{ fontSize: 12, padding: "8px 14px", borderRadius: 999, border: `1px solid ${!usingCustom && goalHours === p.hours ? C.gold : C.border}`, background: !usingCustom && goalHours === p.hours ? C.gold : "none", color: !usingCustom && goalHours === p.hours ? C.bg : C.muted, fontWeight: !usingCustom && goalHours === p.hours ? 600 : 400 }}>
+              {p.label}
+            </button>
+          ))}
+          <button onClick={() => setUsingCustom(true)} style={{ fontSize: 12, padding: "8px 14px", borderRadius: 999, border: `1px solid ${usingCustom ? C.gold : C.border}`, background: usingCustom ? C.gold : "none", color: usingCustom ? C.bg : C.muted, fontWeight: usingCustom ? 600 : 400 }}>
+            Custom
+          </button>
+        </div>
+        {usingCustom && (
+          <div style={{ marginTop: 8 }}>
+            <TextInput type="number" value={customHours} onChange={(e) => setCustomHours(e.target.value)} placeholder="Hours" />
+          </div>
+        )}
+      </div>
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Start time</div>
+        <DateTimeField value={startTime} onChange={setStartTime} />
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <GoldButton onClick={submit}>Start Fast</GoldButton>
+        <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function EndFastForm({ onCancel, onSubmit }) {
+  const [endTime, setEndTime] = useState(nowDateTimeLocal());
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>End time</div>
+        <DateTimeField value={endTime} onChange={setEndTime} />
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => onSubmit(endTime)} style={{ flex: 1, background: C.red, color: "#fff", border: "none", borderRadius: 12, padding: "13px 0", fontSize: 15, fontWeight: 600 }}>Confirm End</button>
+        <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function PastFastForm({ initial, onCancel, onSubmit }) {
+  const [start, setStart] = useState(initial ? toDateTimeLocal(initial.start) : nowDateTimeLocal());
+  const [end, setEnd] = useState(initial ? toDateTimeLocal(initial.end) : nowDateTimeLocal());
+  const [goalHours, setGoalHours] = useState(initial ? initial.goalHours : 16);
+  const [customHours, setCustomHours] = useState(initial && !GOAL_PRESETS.find((p) => p.hours === initial.goalHours) ? String(initial.goalHours) : "");
+  const [usingCustom, setUsingCustom] = useState(initial ? !GOAL_PRESETS.find((p) => p.hours === initial.goalHours) : false);
+
+  const submit = () => {
+    const g = usingCustom ? Number(customHours) : goalHours;
+    if (!g || g <= 0 || !start || !end) return;
+    onSubmit({ start, end, goalHours: g });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Start</div>
+        <DateTimeField value={start} onChange={setStart} />
+      </div>
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>End</div>
+        <DateTimeField value={end} onChange={setEnd} />
+      </div>
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Goal</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {GOAL_PRESETS.map((p) => (
+            <button key={p.label} onClick={() => { setGoalHours(p.hours); setUsingCustom(false); }} style={{ fontSize: 12, padding: "6px 12px", borderRadius: 999, border: `1px solid ${!usingCustom && goalHours === p.hours ? C.gold : C.border}`, background: !usingCustom && goalHours === p.hours ? C.gold : "none", color: !usingCustom && goalHours === p.hours ? C.bg : C.muted }}>
+              {p.label}
+            </button>
+          ))}
+          <button onClick={() => setUsingCustom(true)} style={{ fontSize: 12, padding: "6px 12px", borderRadius: 999, border: `1px solid ${usingCustom ? C.gold : C.border}`, background: usingCustom ? C.gold : "none", color: usingCustom ? C.bg : C.muted }}>
+            Custom
+          </button>
+        </div>
+        {usingCustom && (
+          <div style={{ marginTop: 8 }}>
+            <TextInput type="number" value={customHours} onChange={(e) => setCustomHours(e.target.value)} placeholder="Hours" />
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <GoldButton onClick={submit}>{initial ? "Save changes" : "Add to history"}</GoldButton>
+        <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 // ============ TRADING ============
 function TradingPage() {
   const [data, setData] = useState(() => {
@@ -2082,7 +2553,7 @@ const CHEATSHEET_IMG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
 // ============ BACKUP (real file download) ============
 function downloadBackup() {
-  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data"];
+  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data"];
   const out = {};
   keys.forEach((k) => { out[k] = load(k, null); });
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
@@ -2103,7 +2574,7 @@ function RestoreModal({ onClose }) {
     setStatus("working");
     try {
       const parsed = JSON.parse(jsonText);
-      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data"];
+      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data"];
       keys.forEach((k) => { if (parsed[k] !== undefined && parsed[k] !== null) save(k, parsed[k]); });
       setStatus("done");
       setTimeout(() => window.location.reload(), 900);
@@ -2226,6 +2697,7 @@ const TAB_DEFS = [
   { id: "work", label: "Work", icon: "check-square" },
   { id: "health", label: "Health", icon: "heart" },
   { id: "habits", label: "Habits", icon: "list-checks" },
+  { id: "fasting", label: "Fasting", icon: "flame" },
   { id: "trading", label: "Trading", icon: "trending-up" },
   { id: "countdown", label: "Countdown", icon: "calendar" },
 ];
@@ -2315,6 +2787,7 @@ function App() {
             {tab === "work" && <WorkPage />}
             {tab === "health" && <HealthPage />}
             {tab === "habits" && <HabitsPage />}
+            {tab === "fasting" && <FastingPage />}
             {tab === "trading" && <TradingPage />}
             {tab === "trend" && <TrendPage />}
             {tab === "countdown" && <CountdownPage />}
