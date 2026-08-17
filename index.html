@@ -284,7 +284,7 @@ function WorkPage() {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
       <PageTitle>Work</PageTitle>
       <Card>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -444,6 +444,7 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
   const [tags, setTags] = useState(initial && initial.tags ? initial.tags : []);
   const [newTagText, setNewTagText] = useState("");
   const [addingTag, setAddingTag] = useState(false);
+  const [titleError, setTitleError] = useState(false);
 
   const toggleTag = (t) => setTags(tags.includes(t) ? tags.filter((x) => x !== t) : [...tags, t]);
   const confirmNewTag = () => {
@@ -454,13 +455,19 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
   };
 
   const submit = () => {
-    if (!title.trim()) return;
-    onSubmit({ title: title.trim(), details: details.trim(), due: due || null, tags });
+    if (!title.trim()) { setTitleError(true); return; }
+    setTitleError(false);
+    const pending = newTagText.trim();
+    const finalTags = pending && !tags.includes(pending) ? [...tags, pending] : tags;
+    onSubmit({ title: title.trim(), details: details.trim(), due: due || null, tags: finalTags });
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
-      <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title" style={{ border: "none", borderBottom: `1px solid ${C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+      <div>
+        <TextInput value={title} onChange={(e) => { setTitle(e.target.value); if (titleError) setTitleError(false); }} placeholder="Task title" style={{ border: "none", borderBottom: `1px solid ${titleError ? C.red : C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+        {titleError && <div style={{ fontSize: 11, color: C.red, marginTop: 4 }}>Enter a title before adding.</div>}
+      </div>
       <TextInput value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Details (optional)" style={{ border: "none", borderBottom: `1px solid ${C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
       <div>
         <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Deadline</div>
@@ -469,11 +476,12 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
       <div>
         <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Tags</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          {Object.keys(tagColors).map((t) => {
+          {Array.from(new Set([...Object.keys(tagColors), ...tags])).map((t) => {
             const active = tags.includes(t);
+            const color = tagColors[t] || C.gold;
             return (
-              <button key={t} onClick={() => toggleTag(t)} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${active ? tagColors[t] : C.border}`, background: active ? tagColors[t] : "none", color: active ? C.bg : C.muted }}>
-                <div style={{ width: 6, height: 6, borderRadius: 999, background: active ? C.bg : tagColors[t] }} />
+              <button key={t} onClick={() => toggleTag(t)} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${active ? color : C.border}`, background: active ? color : "none", color: active ? C.bg : C.muted }}>
+                <div style={{ width: 6, height: 6, borderRadius: 999, background: active ? C.bg : color }} />
                 {t}
               </button>
             );
@@ -541,7 +549,7 @@ function HealthPage() {
   const progressDates = Array.from(new Set([...Object.keys(calsByDate), ...Object.keys(weightByDate).filter((d) => weightByDate[d] != null)])).sort();
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
       <PageTitle>Health</PageTitle>
 
       <Card>
@@ -952,7 +960,7 @@ function HabitsPage() {
   if (uncategorized.length > 0) habitSections.push({ name: "Uncategorized", color: C.faint, habits: uncategorized });
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
       <PageTitle>Habits</PageTitle>
 
       {habits.length > 0 && (
@@ -1195,7 +1203,7 @@ function CountdownPage() {
   const daysLabel = (n) => (n === 0 ? "Today" : n === 1 ? "Tomorrow" : n > 1 ? `In ${n}d` : n === -1 ? "Yesterday" : `${-n}d ago`);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
       <PageTitle>Countdown</PageTitle>
 
       <Card>
@@ -1778,7 +1786,7 @@ function FastingPage() {
   const CIRC = 2 * Math.PI * RADIUS;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
       <PageTitle>Fasting</PageTitle>
 
       {needsNudge && (
@@ -1830,6 +1838,11 @@ function FastingPage() {
                 <button onClick={() => setEditingStart(true)} style={{ fontSize: 11, color: C.faint, background: "none", border: "none" }}>
                   Started {fmtDateTime(active.start)} · edit
                 </button>
+              )}
+              {!editingStart && (
+                <div style={{ fontSize: 11, color: isOvertime ? C.green : C.muted, marginTop: 4 }}>
+                  Goal ends {fmtDateTime(new Date(new Date(active.start).getTime() + active.goalHours * 3600000))}
+                </div>
               )}
             </div>
           )}
@@ -1992,6 +2005,9 @@ function StartFastForm({ onCancel, onSubmit }) {
     onSubmit(startTime, g);
   };
 
+  const activeGoal = usingCustom ? Number(customHours) : goalHours;
+  const endPreview = (activeGoal > 0 && startTime) ? new Date(new Date(startTime).getTime() + activeGoal * 3600000) : null;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
       <div>
@@ -2016,6 +2032,11 @@ function StartFastForm({ onCancel, onSubmit }) {
         <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Start time</div>
         <DateTimeField value={startTime} onChange={setStartTime} />
       </div>
+      {endPreview && (
+        <div style={{ fontSize: 12, color: C.gold, textAlign: "center" }}>
+          Fast will end around {fmtDateTime(endPreview)}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8 }}>
         <GoldButton onClick={submit}>Start Fast</GoldButton>
         <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>
@@ -2168,7 +2189,7 @@ function TradingPage() {
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <PageTitle>Trading</PageTitle>
         <button onClick={() => openForm(todayISO())} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
@@ -2496,7 +2517,7 @@ function TradingViewWidget({ src, config, height = 400 }) {
 
 function TrendPage() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
       <PageTitle>Market Trend</PageTitle>
 
       <Card style={{ padding: 12 }}>
@@ -2647,7 +2668,7 @@ function SettingsPage({ tabs, hiddenTabs, toggleTabHidden, reorderTab, onBack })
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <button onClick={onBack} style={{ color: C.muted, background: "none", border: "none", display: "flex", alignItems: "center" }}>
           <Icon name="arrow-left" size={20} />
