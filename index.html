@@ -1784,7 +1784,7 @@ function FastingPage() {
       {needsNudge && (
         <Card style={{ border: `1px solid ${C.gold}` }}>
           <div style={{ fontSize: 13, color: C.textDim, lineHeight: 1.5, marginBottom: 10 }}>
-            This fast has been running since {fmtDateTime(active.start)} \u2014 still going, or did you forget to end it?
+            This fast has been running since {fmtDateTime(active.start)} — still going, or did you forget to end it?
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <GoldButton onClick={() => endFast(nowDateTimeLocal())}>End now</GoldButton>
@@ -1816,7 +1816,7 @@ function FastingPage() {
 
           {isOvertime && (
             <div style={{ marginTop: 10, fontSize: 12, color: C.green, fontWeight: 500, textAlign: "center" }}>
-              Goal hit \u2014 keep going or end whenever you're ready
+              Goal hit — keep going or end whenever you're ready
             </div>
           )}
 
@@ -1850,7 +1850,7 @@ function FastingPage() {
                   <div style={{ fontSize: 11, color: C.muted, marginTop: 3, lineHeight: 1.4 }}>{milestoneInfo.next.desc}</div>
                 </div>
               ) : milestoneInfo.cur && (
-                <div style={{ fontSize: 11, color: C.faint, marginTop: 6 }}>You've reached the final tracked stage \u2014 incredible endurance.</div>
+                <div style={{ fontSize: 11, color: C.faint, marginTop: 6 }}>You've reached the final tracked stage — incredible endurance.</div>
               )}
             </div>
           )}
@@ -1877,7 +1877,7 @@ function FastingPage() {
           <SectionLabel>Eating Window</SectionLabel>
           {lastFast && (
             <div style={{ fontSize: 13, color: C.textDim, marginTop: 8 }}>
-              Last fast: {fmtDuration(new Date(lastFast.end) - new Date(lastFast.start))} \u00b7 goal was {lastFast.goalHours}h
+              Last fast: {fmtDuration(new Date(lastFast.end) - new Date(lastFast.start))} · goal was {lastFast.goalHours}h
               {" \u00b7 "}
               <span style={{ color: (new Date(lastFast.end) - new Date(lastFast.start)) >= lastFast.goalHours * 3600000 ? C.green : C.faint }}>
                 {(new Date(lastFast.end) - new Date(lastFast.start)) >= lastFast.goalHours * 3600000 ? "Goal hit" : "Under goal"}
@@ -1950,7 +1950,7 @@ function FastingPage() {
                         <div style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: hit ? C.green : C.faint }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 13, color: C.text }}>{fmtDuration(dur)} <span style={{ color: C.faint }}>· goal {h.goalHours}h</span></div>
-                          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{fmtDateTime(h.start)} \u2192 {fmtDateTime(h.end)}</div>
+                          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{fmtDateTime(h.start)} → {fmtDateTime(h.end)}</div>
                         </div>
                         <button onClick={() => setEditingHistoryId(h.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
                         <button onClick={() => deleteHistoryEntry(h.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
