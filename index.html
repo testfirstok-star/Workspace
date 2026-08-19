@@ -346,7 +346,7 @@ function WorkPage() {
         position: "relative", background: isDragging ? C.panel : "transparent",
         transform: isDragging ? `translateY(${dragY}px)` : "none",
         zIndex: isDragging ? 5 : 1, boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
-        borderRadius: isDragging ? 8 : 0, touchAction: dragEnabled ? "none" : "auto",
+        borderRadius: isDragging ? 8 : 0,
       }}>
         {dragEnabled ? (
           <div onPointerDown={(e) => onHandlePointerDown(e, t.id, idx)} style={{ color: C.faint, flexShrink: 0, marginTop: 4, cursor: "grab", touchAction: "none" }}>
@@ -2833,7 +2833,7 @@ function SettingsPage({ tabs, hiddenTabs, toggleTabHidden, reorderTab, onBack })
                 position: "relative", background: isDragging ? C.panel : "transparent",
                 transform: isDragging ? `translateY(${dragY}px)` : "none",
                 zIndex: isDragging ? 5 : 1, boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
-                borderRadius: isDragging ? 8 : 0, touchAction: "none",
+                borderRadius: isDragging ? 8 : 0,
               }}>
                 <div onPointerDown={(e) => onHandlePointerDown(e, t.id, idx)} style={{ color: C.faint, cursor: "grab", touchAction: "none", display: "flex" }}>
                   <Icon name="grip" size={16} />
