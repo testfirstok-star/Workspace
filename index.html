@@ -173,12 +173,15 @@ function WorkPage() {
   const [editingId, setEditingId] = useState(null);
   const [dueFilter, setDueFilter] = useState("all");
   const [taskTagFilter, setTaskTagFilter] = useState(null);
+  const [sortMode, setSortMode] = useState("priority");
+  const [tagManageOpen, setTagManageOpen] = useState(false);
+  const [colorPickerTag, setColorPickerTag] = useState(null);
   const [completedOpen, setCompletedOpen] = useState(false);
   const [dragId, setDragId] = useState(null);
   const [dragY, setDragY] = useState(0);
   const dragInfo = useRef({});
   const lastIndexRef = useRef(0);
-  const ROW_HEIGHT = 60;
+  const rowRefs = useRef({});
 
   useEffect(() => { save("journal-data", { entries: notes }); }, [notes]);
   useEffect(() => { save("tasks-data", taskData); }, [taskData]);
@@ -234,7 +237,47 @@ function WorkPage() {
   const matchesTagFilter = (t) => !taskTagFilter || (t.tags || []).includes(taskTagFilter);
   const filteredPending = pendingTasks.filter((t) => matchesDueFilter(t) && matchesTagFilter(t));
   const filtersActive = dueFilter !== "all" || !!taskTagFilter;
-  const dragEnabled = !filtersActive;
+  const dragEnabled = !filtersActive && sortMode === "priority";
+
+  const byDueAsc = (a, b) => {
+    if (!a.due && !b.due) return 0;
+    if (!a.due) return 1;
+    if (!b.due) return -1;
+    return a.due.localeCompare(b.due);
+  };
+
+  let sortedFlat = filteredPending;
+  let tagGroups = null;
+  if (sortMode === "date") {
+    sortedFlat = [...filteredPending].sort(byDueAsc);
+  } else if (sortMode === "tag") {
+    const groups = {};
+    const noTag = [];
+    filteredPending.forEach((t) => {
+      const tag = (t.tags && t.tags[0]) || null;
+      if (!tag) { noTag.push(t); return; }
+      if (!groups[tag]) groups[tag] = [];
+      groups[tag].push(t);
+    });
+    Object.keys(groups).forEach((tag) => groups[tag].sort(byDueAsc));
+    noTag.sort(byDueAsc);
+    tagGroups = Object.keys(groups).sort((a, b) => a.localeCompare(b)).map((tag) => ({ name: tag, color: taskTagColors[tag], items: groups[tag] }));
+    if (noTag.length) tagGroups.push({ name: "No tag", color: C.faint, items: noTag });
+  }
+
+  const deleteTagGlobally = (tagName) => {
+    setTaskData((d) => {
+      const restColors = { ...d.tagColors };
+      delete restColors[tagName];
+      const tasks = d.tasks.map((t) => ({ ...t, tags: (t.tags || []).filter((tg) => tg !== tagName) }));
+      return { ...d, tagColors: restColors, tasks };
+    });
+    if (taskTagFilter === tagName) setTaskTagFilter(null);
+  };
+  const setTaskTagColor = (tagName, color) => {
+    setTaskData((d) => ({ ...d, tagColors: { ...d.tagColors, [tagName]: color } }));
+    setColorPickerTag(null);
+  };
 
   const weekCount = pendingTasks.filter((t) => t.due && daysUntilDue(t.due) >= 0 && daysUntilDue(t.due) <= 7).length;
   const twoWeekCount = pendingTasks.filter((t) => t.due && daysUntilDue(t.due) > 7 && daysUntilDue(t.due) <= 14).length;
@@ -245,18 +288,25 @@ function WorkPage() {
   const onHandlePointerDown = (e, id, idx) => {
     e.preventDefault();
     const order = pendingTasks.map((t) => t.id);
-    dragInfo.current = { startY: e.clientY, originalOrder: order, originalIndex: idx };
+    const rects = order.map((tid) => {
+      const el = rowRefs.current[tid];
+      const r = el ? el.getBoundingClientRect() : { top: 0, height: 0 };
+      return { id: tid, mid: r.top + r.height / 2 };
+    });
+    dragInfo.current = { startY: e.clientY, order, rects, originalIndex: idx };
     lastIndexRef.current = idx;
     setDragId(id); setDragY(0);
 
     const move = (ev) => {
       const dy = ev.clientY - dragInfo.current.startY;
       setDragY(dy);
-      const shift = Math.round(dy / ROW_HEIGHT);
-      const newIndex = Math.max(0, Math.min(dragInfo.current.originalOrder.length - 1, dragInfo.current.originalIndex + shift));
+      const draggedMid = dragInfo.current.rects[dragInfo.current.originalIndex].mid + dy;
+      const others = dragInfo.current.rects.filter((_, i) => i !== dragInfo.current.originalIndex);
+      let newIndex = 0;
+      others.forEach((r) => { if (draggedMid > r.mid) newIndex++; });
       if (newIndex !== lastIndexRef.current) {
         lastIndexRef.current = newIndex;
-        const ids = [...dragInfo.current.originalOrder];
+        const ids = [...dragInfo.current.order];
         ids.splice(dragInfo.current.originalIndex, 1);
         ids.splice(newIndex, 0, id);
         setTasks((prev) => {
@@ -282,6 +332,47 @@ function WorkPage() {
     { id: "soon", label: "Due soon" },
     { id: "nodate", label: "No date" },
   ];
+  const sortModes = [
+    { id: "priority", label: "Priority" },
+    { id: "date", label: "Date" },
+    { id: "tag", label: "Tags" },
+  ];
+
+  const renderTaskRow = (t, idx) => {
+    const isDragging = dragId === t.id;
+    return (
+      <div key={t.id} ref={(el) => { rowRefs.current[t.id] = el; }} style={{
+        display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 0", borderBottom: `1px solid ${C.border}`,
+        position: "relative", background: isDragging ? C.panel : "transparent",
+        transform: isDragging ? `translateY(${dragY}px)` : "none",
+        zIndex: isDragging ? 5 : 1, boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
+        borderRadius: isDragging ? 8 : 0, touchAction: dragEnabled ? "none" : "auto",
+      }}>
+        {dragEnabled ? (
+          <div onPointerDown={(e) => onHandlePointerDown(e, t.id, idx)} style={{ color: C.faint, flexShrink: 0, marginTop: 4, cursor: "grab", touchAction: "none" }}>
+            <Icon name="grip" size={16} />
+          </div>
+        ) : (
+          <div style={{ width: 16, flexShrink: 0 }} />
+        )}
+        <button onClick={() => toggleTask(t.id)} style={{ marginTop: 2, width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: "none", border: `1px solid ${C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, color: C.text }}>{t.important && <span style={{ color: C.red, fontWeight: 700, marginRight: 4 }}>!</span>}{t.title}</div>
+          {t.details && <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{t.details}</div>}
+          {t.due && <div style={{ fontSize: 11, marginTop: 2, color: isDueUrgent(t.due) ? C.red : C.faint }}>Due {fmtDate(t.due)}</div>}
+          {t.tags && t.tags.length > 0 && (
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+              {t.tags.map((tag) => (
+                <span key={tag} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(tag, taskTagColors)}25`, color: tagColorFor(tag, taskTagColors) }}>{tag}</span>
+              ))}
+            </div>
+          )}
+        </div>
+        <button onClick={() => startEditTask(t)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
+        <button onClick={() => deleteTask(t.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
+      </div>
+    );
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
@@ -297,6 +388,17 @@ function WorkPage() {
         {showTaskForm && (
           <TaskForm tagColors={taskTagColors} initial={editingTask} onCancel={resetTaskForm} onSubmit={saveTask} />
         )}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>Sort</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {sortModes.map((s) => (
+              <button key={s.id} onClick={() => setSortMode(s.id)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${sortMode === s.id ? C.gold : C.border}`, background: sortMode === s.id ? C.gold : "none", color: sortMode === s.id ? C.bg : C.muted }}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div style={{ display: "flex", gap: 6, marginBottom: 8, overflowX: "auto", paddingBottom: 2 }}>
           {dueFilters.map((f) => (
@@ -318,47 +420,23 @@ function WorkPage() {
           </div>
         )}
 
-        {filtersActive && (
-          <div style={{ fontSize: 11, color: C.faint, marginBottom: 8 }}>Clear filters to drag-reorder tasks.</div>
+        {(filtersActive || sortMode !== "priority") && (
+          <div style={{ fontSize: 11, color: C.faint, marginBottom: 8 }}>Clear filters and sort by Priority to drag-reorder tasks.</div>
         )}
 
-        <div style={{ display: "flex", flexDirection: "column", maxHeight: 400, overflowY: dragId ? "hidden" : "auto" }}>
+        <div style={{ display: "flex", flexDirection: "column", maxHeight: 460, overflowY: dragId ? "hidden" : "auto" }}>
           {filteredPending.length === 0 && <EmptyState text="No tasks match. Add one above." />}
-          {filteredPending.map((t, idx) => {
-            const isDragging = dragId === t.id;
-            return (
-              <div key={t.id} style={{
-                display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 0", borderBottom: `1px solid ${C.border}`,
-                position: "relative", background: isDragging ? C.panel : "transparent",
-                transform: isDragging ? `translateY(${dragY}px)` : "none",
-                zIndex: isDragging ? 5 : 1, boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
-                borderRadius: isDragging ? 8 : 0, touchAction: dragEnabled ? "none" : "auto",
-              }}>
-                {dragEnabled ? (
-                  <div onPointerDown={(e) => onHandlePointerDown(e, t.id, idx)} style={{ color: C.faint, flexShrink: 0, marginTop: 4, cursor: "grab", touchAction: "none" }}>
-                    <Icon name="grip" size={16} />
+          {sortMode === "tag" && tagGroups
+            ? tagGroups.map((group) => (
+                <div key={group.name} style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, marginTop: 4 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 999, background: group.color }} />
+                    <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>{group.name}</span>
                   </div>
-                ) : (
-                  <div style={{ width: 16, flexShrink: 0 }} />
-                )}
-                <button onClick={() => toggleTask(t.id)} style={{ marginTop: 2, width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: "none", border: `1px solid ${C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, color: C.text }}>{t.title}</div>
-                  {t.details && <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{t.details}</div>}
-                  {t.due && <div style={{ fontSize: 11, marginTop: 2, color: isDueUrgent(t.due) ? C.red : C.faint }}>Due {fmtDate(t.due)}</div>}
-                  {t.tags && t.tags.length > 0 && (
-                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                      {t.tags.map((tag) => (
-                        <span key={tag} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(tag, taskTagColors)}25`, color: tagColorFor(tag, taskTagColors) }}>{tag}</span>
-                      ))}
-                    </div>
-                  )}
+                  {group.items.map((t, idx) => renderTaskRow(t, idx))}
                 </div>
-                <button onClick={() => startEditTask(t)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
-                <button onClick={() => deleteTask(t.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
-              </div>
-            );
-          })}
+              ))
+            : sortedFlat.map((t, idx) => renderTaskRow(t, idx))}
         </div>
 
         <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
@@ -375,7 +453,7 @@ function WorkPage() {
                     <Icon name="check" size={13} color={C.bg} />
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, color: C.faint, textDecoration: "line-through" }}>{t.title}</div>
+                    <div style={{ fontSize: 14, color: C.faint, textDecoration: "line-through" }}>{t.important && <span style={{ color: C.red, fontWeight: 700, marginRight: 4, textDecoration: "none", display: "inline-block" }}>!</span>}{t.title}</div>
                     {t.tags && t.tags.length > 0 && (
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
                         {t.tags.map((tag) => (
@@ -433,6 +511,34 @@ function WorkPage() {
           </div>
         </div>
       </Card>
+
+      <Card>
+        <button onClick={() => setTagManageOpen(!tagManageOpen)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+          <SectionLabel>Manage Tags ({taskTags.length})</SectionLabel>
+          <Icon name={tagManageOpen ? "chevron-left" : "chevron-right"} size={14} color={C.muted} style={{ transform: tagManageOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+        </button>
+        {tagManageOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 12 }}>
+            {taskTags.length === 0 && <EmptyState text="No tags yet." />}
+            {taskTags.map((tag, i) => (
+              <div key={tag}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+                  <button onClick={() => setColorPickerTag(colorPickerTag === tag ? null : tag)} style={{ width: 18, height: 18, borderRadius: 999, flexShrink: 0, background: taskTagColors[tag], border: `1px solid ${C.border}` }} />
+                  <span style={{ fontSize: 13, color: C.text, flex: 1 }}>{tag}</span>
+                  <button onClick={() => deleteTagGlobally(tag)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
+                </div>
+                {colorPickerTag === tag && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10, padding: 10, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                    {COUNTDOWN_PALETTE.map((c) => (
+                      <button key={c} onClick={() => setTaskTagColor(tag, c)} style={{ width: 24, height: 24, borderRadius: 999, background: c, border: c === taskTagColors[tag] ? `2px solid ${C.text}` : "none" }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
@@ -442,6 +548,7 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
   const [details, setDetails] = useState(initial && initial.details ? initial.details : "");
   const [due, setDue] = useState(initial && initial.due ? initial.due : "");
   const [tags, setTags] = useState(initial && initial.tags ? initial.tags : []);
+  const [important, setImportant] = useState(initial && initial.important ? true : false);
   const [newTagText, setNewTagText] = useState("");
   const [addingTag, setAddingTag] = useState(false);
   const [titleError, setTitleError] = useState(false);
@@ -459,14 +566,19 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
     setTitleError(false);
     const pending = newTagText.trim();
     const finalTags = pending && !tags.includes(pending) ? [...tags, pending] : tags;
-    onSubmit({ title: title.trim(), details: details.trim(), due: due || null, tags: finalTags });
+    onSubmit({ title: title.trim(), details: details.trim(), due: due || null, tags: finalTags, important });
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
-      <div>
-        <TextInput value={title} onChange={(e) => { setTitle(e.target.value); if (titleError) setTitleError(false); }} placeholder="Task title" style={{ border: "none", borderBottom: `1px solid ${titleError ? C.red : C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
-        {titleError && <div style={{ fontSize: 11, color: C.red, marginTop: 4 }}>Enter a title before adding.</div>}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <TextInput value={title} onChange={(e) => { setTitle(e.target.value); if (titleError) setTitleError(false); }} placeholder="Task title" style={{ border: "none", borderBottom: `1px solid ${titleError ? C.red : C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+          {titleError && <div style={{ fontSize: 11, color: C.red, marginTop: 4 }}>Enter a title before adding.</div>}
+        </div>
+        <button onClick={() => setImportant(!important)} title="Mark important" style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: important ? C.red : "none", border: `1px solid ${important ? C.red : C.border}`, color: important ? "#fff" : C.faint, fontWeight: 700, fontSize: 16 }}>
+          !
+        </button>
       </div>
       <TextInput value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Details (optional)" style={{ border: "none", borderBottom: `1px solid ${C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
       <div>
@@ -1076,7 +1188,7 @@ function HabitsPage() {
 }
 
 // ============ COUNTDOWN ============
-const COUNTDOWN_PALETTE = ["#C9A961", "#6FA8C9", "#7FB069", "#C1554D", "#9B8AC4", "#D98CB3", "#4FBDBD", "#E0A458", "#8FA6D9", "#B5CE6B", "#C97FAE", "#6B8F9E"];
+const COUNTDOWN_PALETTE = ["#C9A961", "#6FA8C9", "#7FB069", "#C1554D", "#9B8AC4", "#D98CB3", "#4FBDBD", "#E0A458", "#8FA6D9", "#B5CE6B", "#C97FAE", "#6B8F9E", "#B0795C", "#84A98C"];
 
 function nextOccurrence(item, today) {
   const anchor = new Date(item.date + "T00:00:00");
@@ -1121,6 +1233,7 @@ function CountdownPage() {
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [colorPickerTag, setColorPickerTag] = useState(null);
   const [logOpen, setLogOpen] = useState(true);
+  const [pastLogOpen, setPastLogOpen] = useState(false);
   const [logFilter, setLogFilter] = useState(null);
   const [pastOpen, setPastOpen] = useState(false);
 
@@ -1199,6 +1312,9 @@ function CountdownPage() {
   const editingEntry = editingEntryId ? calendarEntries.find((e) => e.id === editingEntryId) : (calAddDate ? { date: calAddDate } : null);
 
   const sortedEntries = [...calendarEntries].sort((a, b) => a.date.localeCompare(b.date)).filter((e) => !logFilter || e.tag === logFilter);
+  const todayStr = todayISO();
+  const upcomingEntries = sortedEntries.filter((e) => (e.endDate || e.date) >= todayStr);
+  const pastEntries = sortedEntries.filter((e) => (e.endDate || e.date) < todayStr).reverse();
 
   const daysLabel = (n) => (n === 0 ? "Today" : n === 1 ? "Tomorrow" : n > 1 ? `In ${n}d` : n === -1 ? "Yesterday" : `${-n}d ago`);
 
@@ -1362,8 +1478,8 @@ function CountdownPage() {
               </div>
             )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto" }}>
-              {sortedEntries.length === 0 && <EmptyState text="No calendar entries yet. Tap a date above to add one." />}
-              {sortedEntries.map((e, i) => (
+              {upcomingEntries.length === 0 && <EmptyState text="No calendar entries yet. Tap a date above to add one." />}
+              {upcomingEntries.map((e, i) => (
                 <div key={e.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0", borderTop: i === 0 ? "none" : `1px solid ${C.border}`, paddingTop: i === 0 ? 6 : 12 }}>
                   <div style={{ marginTop: 5, width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: tagColorFor(e.tag, data.tagColors) }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -1377,6 +1493,32 @@ function CountdownPage() {
                 </div>
               ))}
             </div>
+
+            {pastEntries.length > 0 && (
+              <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+                <button onClick={() => setPastLogOpen(!pastLogOpen)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+                  <span style={{ fontSize: 12, color: C.muted }}>Past ({pastEntries.length})</span>
+                  <Icon name={pastLogOpen ? "chevron-left" : "chevron-right"} size={13} color={C.muted} style={{ transform: pastLogOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+                </button>
+                {pastLogOpen && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10, maxHeight: 280, overflowY: "auto" }}>
+                    {pastEntries.map((e) => (
+                      <div key={e.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0" }}>
+                        <div style={{ marginTop: 5, width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: tagColorFor(e.tag, data.tagColors) }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14, color: C.faint }}>{e.title}</div>
+                          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                            {e.endDate && e.endDate !== e.date ? `${fmtDate(e.date)} \u2013 ${fmtDate(e.endDate)}` : fmtDate(e.date)} · {e.tag}
+                          </div>
+                        </div>
+                        <button onClick={() => startEditEntry(e)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
+                        <button onClick={() => deleteEntry(e.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </Card>
