@@ -1107,7 +1107,7 @@ function HabitsPage() {
           </button>
         </div>
         {showForm && (
-          <HabitForm categoryColors={categoryColors} initial={editingHabit} onCancel={resetForm} onSubmit={saveHabit} />
+          <HabitForm categoryColors={categoryColors} initial={editingHabit} onCancel={resetForm} onSubmit={saveHabit} onDelete={deleteHabit} />
         )}
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -1159,7 +1159,6 @@ function HabitsPage() {
                       </div>
                       <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: C.muted }}>{count}/{total}</div>
                       <button onClick={() => startEditHabit(h)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={13} /></button>
-                      <button onClick={() => deleteHabit(h.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr repeat(7, 22px)", gap: 4, alignItems: "center" }}>
                       <div />
@@ -1725,7 +1724,7 @@ function CountdownCalendarGrid({ month, onMonthChange, items, entries, tagColors
   );
 }
 
-function HabitForm({ categoryColors, initial, onCancel, onSubmit }) {
+function HabitForm({ categoryColors, initial, onCancel, onSubmit, onDelete }) {
   const [name, setName] = useState(initial && initial.name ? initial.name : "");
   const [category, setCategory] = useState(initial && initial.category ? initial.category : "");
   const [newCatText, setNewCatText] = useState("");
@@ -1768,6 +1767,11 @@ function HabitForm({ categoryColors, initial, onCancel, onSubmit }) {
           <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>
         )}
       </div>
+      {initial && initial.id && onDelete && (
+        <button onClick={() => onDelete(initial.id)} style={{ fontSize: 12, color: C.red, background: "none", border: "none", alignSelf: "flex-start" }}>
+          Delete habit
+        </button>
+      )}
     </div>
   );
 }
