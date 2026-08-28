@@ -90,6 +90,7 @@ function Icon({ name, size = 18, color = "currentColor", style }) {
     case "arrow-left": return <svg {...p}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>;
     case "cart": return <svg {...p}><circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" /><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" /></svg>;
     case "book": return <svg {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>;
+    case "activity": return <svg {...p}><polyline points="2 12 6 12 9 4 13 20 16 12 22 12" /></svg>;
     default: return null;
   }
 }
@@ -883,12 +884,17 @@ function shortNum(v) {
 
 function ProgressChart({ dates, calsByDate, weightByDate }) {
   const [tab, setTab] = useState("both");
+  const scrollRef = useRef(null);
   const daySpacing = 46;
   const padTop = 20, padBottom = 22, height = 190;
   const width = Math.max(dates.length * daySpacing, 280);
   const xFor = (i) => i * daySpacing + daySpacing / 2;
   const barWidth = 16;
   const axisWidth = 32;
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+  }, [dates.length, width]);
 
   const showWeight = tab === "both" || tab === "weight";
   const showCals = tab === "both" || tab === "calories";
@@ -952,7 +958,7 @@ function ProgressChart({ dates, calsByDate, weightByDate }) {
             ))}
           </div>
         )}
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", flex: 1 }}>
+        <div ref={scrollRef} style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", flex: 1 }}>
           <svg width={width} height={height}>
             {showCals && calVals.map((v, i) => v > 0 && (
               <g key={i}>
@@ -2650,6 +2656,466 @@ function RecipeForm({ initial, onCancel, onSubmit }) {
   );
 }
 
+// ============ FITNESS ============
+const DEFAULT_MEALS = [
+  { id: 1, time: "06:30", label: "Morning", description: "After waking up, use the bathroom first, weigh yourself and record it, then eat breakfast:\n300ml warm water mixed with protein powder (adjust amount based on body weight, e.g. 35g protein powder for 90kg)\n10g dietary fiber\n1 deep-sea fish oil capsule\n1 vitamin tablet\nCan also pair with 2 cereal/oat bars\nDrink 2000\u20132500ml warm water throughout the day, in small sips" },
+  { id: 2, time: "10:00", label: "Mid-Morning Snack", description: "Optional snack:\nOne serving of protein powder\nOne level scoop of dietary fiber" },
+  { id: 3, time: "12:30", label: "Lunch", description: "250g vegetables (raw weight)\n100g meat (raw weight)\n100g staple/carb (rice, brown rice, potato, sweet potato, yam, or taro all work)\nCooking method is flexible, as long as the meat is pure lean meat \u2014 cafeteria, takeout, or ready-to-eat meals are all fine" },
+  { id: 4, time: "17:00", label: "Afternoon", description: "Drink 200ml warm water, in small sips" },
+  { id: 5, time: "18:30", label: "Dinner", description: "Same portions as lunch:\n250g vegetables (raw weight)\n100g meat (raw weight)\n100g staple/carb\nCan also take 1 vitamin tablet and 1 deep-sea fish oil capsule" },
+  { id: 6, time: "20:00", label: "Evening Exercise", description: "40 minutes of super slow jogging on an acupressure mat. Start with 10\u201320 minutes and increase by 5\u201310 minutes each day until reaching 40 minutes.\nKeep your second toe, knees, pelvis, and eyes all facing straight ahead\nLand as lightly as possible; don't let the forefoot linger \u2014 once it touches the mat, transition to the heel\nBreathe however feels comfortable, just don't hold your breath\nCan use a cushioning mat and wear knee guards to protect your joints" },
+  { id: 7, time: "21:00", label: "Night Hydration", description: "Drink 200ml warm water, in small sips (repeat again at 22:00)" },
+  { id: 8, time: "23:00", label: "Sleep", description: "Go to bed" },
+];
+
+function latestWeightOnOrBefore(weightObj, dateStr) {
+  const dates = Object.keys(weightObj || {}).filter((d) => weightObj[d] != null && d <= dateStr).sort();
+  if (!dates.length) return null;
+  return weightObj[dates[dates.length - 1]];
+}
+const STEP_REF_WEIGHT = 68;
+function stepCaloriesFor(steps, weightKg) {
+  const w = weightKg || STEP_REF_WEIGHT;
+  return Math.round((Number(steps) || 0) * 0.04 * (w / STEP_REF_WEIGHT));
+}
+
+function StarRow({ value, onChange, size = 16, readOnly }) {
+  const stars = [1, 2, 3, 4, 5];
+  return (
+    <div style={{ display: "flex", gap: 2 }}>
+      {stars.map((n) => (
+        <button
+          key={n}
+          disabled={readOnly}
+          onClick={() => onChange && onChange(n === value ? 0 : n)}
+          style={{ background: "none", border: "none", padding: 0, cursor: readOnly ? "default" : "pointer" }}
+        >
+          <svg width={size} height={size} viewBox="0 0 24 24" fill={n <= value ? C.gold : "none"} stroke={n <= value ? C.gold : C.faint} strokeWidth={1.5} strokeLinejoin="round">
+            <path d="M12 2.5l2.9 6.6 7.1.7-5.3 4.8 1.5 7-6.2-3.7-6.2 3.7 1.5-7-5.3-4.8 7.1-.7z" />
+          </svg>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function FitnessPage() {
+  const [data, setData] = useState(() => load("exercise-data", { exercises: [], tagColors: {} }));
+  useEffect(() => { save("exercise-data", data); }, [data]);
+  const [mealData, setMealData] = useState(() => {
+    const d = load("meal-schedule-data", null);
+    return d && d.meals ? d : { meals: DEFAULT_MEALS };
+  });
+  useEffect(() => { save("meal-schedule-data", mealData); }, [mealData]);
+  const [trackData, setTrackData] = useState(() => load("fitness-tracking-data", { steps: {}, target: 500 }));
+  useEffect(() => { save("fitness-tracking-data", trackData); }, [trackData]);
+
+  const [healthSnapshot] = useState(() => load("health-data", { food: {}, weight: {} }));
+
+  const [showExForm, setShowExForm] = useState(false);
+  const [editingExId, setEditingExId] = useState(null);
+  const [exFilter, setExFilter] = useState(null);
+  const [exSort, setExSort] = useState("name");
+
+  const [showMealForm, setShowMealForm] = useState(false);
+  const [editingMealId, setEditingMealId] = useState(null);
+
+  const [viewDate, setViewDate] = useState(todayISO());
+  const [editingTarget, setEditingTarget] = useState(false);
+  const [targetInput, setTargetInput] = useState(String(trackData.target));
+
+  const exercises = data.exercises;
+  const tagColors = data.tagColors;
+  const tags = Object.keys(tagColors);
+  const editingEx = editingExId ? exercises.find((e) => e.id === editingExId) : null;
+
+  const saveExercise = (fields) => {
+    setData((d) => {
+      let tagColors = d.tagColors;
+      (fields.tags || []).forEach((t) => {
+        if (!tagColors[t]) {
+          const used = Object.keys(tagColors);
+          tagColors = { ...tagColors, [t]: COUNTDOWN_PALETTE[used.length % COUNTDOWN_PALETTE.length] };
+        }
+      });
+      let exercises;
+      if (editingExId) {
+        exercises = d.exercises.map((e) => (e.id === editingExId ? { ...e, ...fields } : e));
+      } else {
+        exercises = [{ id: Date.now(), log: {}, ...fields }, ...d.exercises];
+      }
+      return { ...d, exercises, tagColors };
+    });
+    setShowExForm(false); setEditingExId(null);
+  };
+  const deleteExercise = (id) => { setData((d) => ({ ...d, exercises: d.exercises.filter((e) => e.id !== id) })); if (editingExId === id) { setShowExForm(false); setEditingExId(null); } };
+  const startEditEx = (e) => { setEditingExId(e.id); setShowExForm(true); };
+  const resetExForm = () => { setEditingExId(null); setShowExForm(false); };
+  const toggleExDone = (id, date) => setData((d) => ({ ...d, exercises: d.exercises.map((e) => (e.id === id ? { ...e, log: { ...e.log, [date]: !e.log[date] } } : e)) }));
+
+  let visibleExercises = exFilter ? exercises.filter((e) => (e.tags || []).includes(exFilter)) : exercises;
+  visibleExercises = [...visibleExercises].sort((a, b) => {
+    if (exSort === "name") return a.title.localeCompare(b.title);
+    if (exSort === "effectiveness") return (b.effectiveness || 0) - (a.effectiveness || 0);
+    if (exSort === "toughness") return (b.toughness || 0) - (a.toughness || 0);
+    if (exSort === "calories") return (b.calories || 0) - (a.calories || 0);
+    return 0;
+  });
+
+  const saveMeal = (fields) => {
+    setMealData((d) => {
+      let meals;
+      if (editingMealId) {
+        meals = d.meals.map((m) => (m.id === editingMealId ? { ...m, ...fields } : m));
+      } else {
+        meals = [...d.meals, { id: Date.now(), ...fields }];
+      }
+      return { ...d, meals };
+    });
+    setShowMealForm(false); setEditingMealId(null);
+  };
+  const deleteMeal = (id) => setMealData((d) => ({ ...d, meals: d.meals.filter((m) => m.id !== id) }));
+  const editingMeal = editingMealId ? mealData.meals.find((m) => m.id === editingMealId) : null;
+  const sortedMeals = [...mealData.meals].sort((a, b) => a.time.localeCompare(b.time));
+
+  const isToday = viewDate === todayISO();
+  const intakeToday = (healthSnapshot.food[viewDate] || []).reduce((s, f) => s + f.cal, 0);
+  const weightForDate = latestWeightOnOrBefore(healthSnapshot.weight, viewDate);
+  const stepsToday = trackData.steps[viewDate] || "";
+  const setSteps = (val) => setTrackData((d) => ({ ...d, steps: { ...d.steps, [viewDate]: val === "" ? undefined : Number(val) } }));
+  const stepCals = stepCaloriesFor(stepsToday, weightForDate);
+  const exerciseCalsToday = exercises.filter((e) => e.log[viewDate]).reduce((s, e) => s + (Number(e.calories) || 0), 0);
+  const totalBurned = stepCals + exerciseCalsToday;
+  const netCalories = intakeToday - totalBurned;
+  const remaining = trackData.target - totalBurned;
+
+  const saveTarget = () => {
+    const v = Number(targetInput);
+    if (!isNaN(v) && v >= 0) setTrackData((d) => ({ ...d, target: v }));
+    setEditingTarget(false);
+  };
+
+  const candidates = exercises.filter((e) => !e.log[viewDate] && e.calories);
+  const recommended = [...candidates].sort((a, b) => Math.abs(a.calories - remaining) - Math.abs(b.calories - remaining)).slice(0, 3);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
+      <PageTitle>Weight Management</PageTitle>
+
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <SectionLabel>Exercise Library</SectionLabel>
+          <button onClick={() => (showExForm ? resetExForm() : (setEditingExId(null), setShowExForm(true)))} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+            <Icon name={showExForm ? "x" : "plus"} size={14} /> {showExForm ? "Cancel" : "Add"}
+          </button>
+        </div>
+
+        {showExForm && <ExerciseForm tagColors={tagColors} initial={editingEx} onCancel={resetExForm} onSubmit={saveExercise} />}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>Sort</span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[{ id: "name", label: "Name" }, { id: "effectiveness", label: "Effectiveness" }, { id: "toughness", label: "Toughness" }, { id: "calories", label: "Calories" }].map((s) => (
+              <button key={s.id} onClick={() => setExSort(s.id)} style={{ fontSize: 11, padding: "5px 10px", borderRadius: 999, border: `1px solid ${exSort === s.id ? C.gold : C.border}`, background: exSort === s.id ? C.gold : "none", color: exSort === s.id ? C.bg : C.muted }}>{s.label}</button>
+            ))}
+          </div>
+        </div>
+
+        {tags.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 2 }}>
+            <button onClick={() => setExFilter(null)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${exFilter === null ? C.gold : C.border}`, background: exFilter === null ? C.gold : "none", color: exFilter === null ? C.bg : C.muted }}>All</button>
+            {tags.map((tag) => (
+              <button key={tag} onClick={() => setExFilter(exFilter === tag ? null : tag)} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${exFilter === tag ? tagColors[tag] : C.border}`, background: exFilter === tag ? tagColors[tag] : "none", color: exFilter === tag ? C.bg : C.muted }}>
+                <div style={{ width: 6, height: 6, borderRadius: 999, background: exFilter === tag ? C.bg : tagColors[tag] }} />
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: 420, overflowY: "auto" }}>
+          {visibleExercises.length === 0 && <EmptyState text="No exercises yet. Add one above." />}
+          {visibleExercises.map((e, i) => (
+            <div key={e.id} style={{ paddingTop: i === 0 ? 0 : 12, borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {e.link ? (
+                    <a href={e.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 14, color: C.blue, textDecoration: "underline" }}>{e.title}</a>
+                  ) : (
+                    <div style={{ fontSize: 14, color: C.text }}>{e.title}</div>
+                  )}
+                  {e.tags && e.tags.length > 0 && (
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                      {e.tags.map((tag) => (
+                        <span key={tag} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(tag, tagColors)}25`, color: tagColorFor(tag, tagColors) }}>{tag}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                    <StarRow value={e.effectiveness || 0} readOnly size={13} />
+                    <StarRow value={e.toughness || 0} readOnly size={13} />
+                  </div>
+                  <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
+                    {e.duration ? `${e.duration} min` : ""}{e.duration && e.calories ? " · " : ""}{e.calories ? `${e.calories} kcal` : ""}
+                  </div>
+                  {e.remarks && <div style={{ fontSize: 12, color: C.textDim, marginTop: 4, lineHeight: 1.4 }}>{e.remarks}</div>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+                  <button onClick={() => startEditEx(e)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={13} /></button>
+                  <button onClick={() => deleteExercise(e.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <SectionLabel>Daily Meal Schedule</SectionLabel>
+          <button onClick={() => (showMealForm ? (setShowMealForm(false), setEditingMealId(null)) : (setEditingMealId(null), setShowMealForm(true)))} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+            <Icon name={showMealForm ? "x" : "plus"} size={14} /> {showMealForm ? "Cancel" : "Add"}
+          </button>
+        </div>
+        {showMealForm && <MealForm initial={editingMeal} onCancel={() => { setShowMealForm(false); setEditingMealId(null); }} onSubmit={saveMeal} />}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {sortedMeals.map((m, i) => (
+            <div key={m.id} style={{ paddingTop: i === 0 ? 0 : 12, borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: C.gold, fontFamily: "'JetBrains Mono', monospace" }}>{m.time} <span style={{ color: C.text, fontFamily: "'Inter', sans-serif", fontWeight: 500 }}>{m.label}</span></div>
+                  <div style={{ fontSize: 12, color: C.textDim, marginTop: 4, lineHeight: 1.5 }}>
+                    {m.description.split("\n").map((line, li) => <div key={li}>{line}</div>)}
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+                  <button onClick={() => { setEditingMealId(m.id); setShowMealForm(true); }} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={13} /></button>
+                  <button onClick={() => deleteMeal(m.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <SectionLabel>Daily Tracking</SectionLabel>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12, marginBottom: 16 }}>
+          <button onClick={() => setViewDate(localISO(addDays(new Date(viewDate + "T00:00:00"), -1)))} style={iconBtnStyle}><Icon name="chevron-left" size={18} /></button>
+          <div style={{ flex: 1 }}><DateField value={viewDate} onChange={setViewDate} /></div>
+          <button onClick={() => setViewDate(localISO(addDays(new Date(viewDate + "T00:00:00"), 1)))} style={iconBtnStyle}><Icon name="chevron-right" size={18} /></button>
+          {!isToday && <button onClick={() => setViewDate(todayISO())} style={{ fontSize: 12, color: C.gold, background: "none", border: `1px solid ${C.border}`, borderRadius: 999, padding: "8px 14px", whiteSpace: "nowrap" }}>Today</button>}
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Steps</div>
+          <TextInput type="number" value={stepsToday ?? ""} onChange={(e) => setSteps(e.target.value)} placeholder="Steps today" />
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
+            {stepCals} kcal from steps{weightForDate ? ` (using ${weightForDate}kg logged weight)` : " (no logged weight yet \u2014 using a default estimate)"}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: C.muted }}>Calorie intake (from Health)</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", color: C.textDim }}>{intakeToday}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: C.muted }}>Exercise calories burned</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", color: C.textDim }}>{exerciseCalsToday}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: C.muted }}>Step calories burned</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", color: C.textDim }}>{stepCals}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 2 }}>
+            <span style={{ color: C.text, fontWeight: 500 }}>Net calories</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", color: netCalories <= 0 ? C.green : C.red, fontWeight: 600 }}>{netCalories}</span>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: C.muted }}>Daily burn target</span>
+          {editingTarget ? (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <TextInput type="number" value={targetInput} onChange={(e) => setTargetInput(e.target.value)} style={{ width: 90, padding: "4px 8px" }} />
+              <button onClick={saveTarget} style={{ color: C.gold, background: "none", border: "none" }}><Icon name="check" size={14} /></button>
+            </div>
+          ) : (
+            <button onClick={() => { setTargetInput(String(trackData.target)); setEditingTarget(true); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.textDim, fontFamily: "'JetBrains Mono', monospace", fontSize: 13 }}>
+              {trackData.target} kcal <Icon name="pencil" size={11} color={C.faint} />
+            </button>
+          )}
+        </div>
+
+        {remaining > 0 ? (
+          <div>
+            <div style={{ fontSize: 12, color: C.gold, marginBottom: 8 }}>{remaining} kcal left to hit your target today</div>
+            {recommended.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {recommended.map((e) => (
+                  <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <button onClick={() => toggleExDone(e.id, viewDate)} style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0, background: "none", border: `1px solid ${C.faint}` }} />
+                    <span style={{ fontSize: 13, color: C.text, flex: 1 }}>{e.title}</span>
+                    <span style={{ fontSize: 12, color: C.muted, fontFamily: "'JetBrains Mono', monospace" }}>{e.calories} kcal</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyState text="Add exercises with calorie values above to get recommendations." />
+            )}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: C.green }}>Target met for today \u2014 nice work.</div>
+        )}
+
+        {exercises.length > 0 && (
+          <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>Mark exercises done {isToday ? "today" : `on ${fmtDate(viewDate)}`}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {exercises.map((e) => {
+                const checked = !!e.log[viewDate];
+                return (
+                  <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <button onClick={() => toggleExDone(e.id, viewDate)} style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: checked ? C.green : "none", border: `1px solid ${checked ? C.green : C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {checked && <Icon name="check" size={12} color={C.bg} />}
+                    </button>
+                    <span style={{ fontSize: 13, color: checked ? C.faint : C.text, textDecoration: checked ? "line-through" : "none", flex: 1 }}>{e.title}</span>
+                    <span style={{ fontSize: 11, color: C.muted, fontFamily: "'JetBrains Mono', monospace" }}>{e.calories || 0} kcal</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function ExerciseForm({ tagColors, initial, onCancel, onSubmit }) {
+  const [title, setTitle] = useState(initial && initial.title ? initial.title : "");
+  const [link, setLink] = useState(initial && initial.link ? initial.link : "");
+  const [duration, setDuration] = useState(initial && initial.duration ? initial.duration : "");
+  const [remarks, setRemarks] = useState(initial && initial.remarks ? initial.remarks : "");
+  const [calories, setCalories] = useState(initial && initial.calories ? initial.calories : "");
+  const [effectiveness, setEffectiveness] = useState(initial && initial.effectiveness ? initial.effectiveness : 0);
+  const [toughness, setToughness] = useState(initial && initial.toughness ? initial.toughness : 0);
+  const [tags, setTags] = useState(initial && initial.tags ? initial.tags : []);
+  const [newTagText, setNewTagText] = useState("");
+  const [addingTag, setAddingTag] = useState(false);
+  const [titleError, setTitleError] = useState(false);
+
+  const toggleTag = (t) => setTags(tags.includes(t) ? tags.filter((x) => x !== t) : [...tags, t]);
+  const confirmNewTag = () => {
+    const t = newTagText.trim();
+    if (!t) return;
+    if (!tags.includes(t)) setTags([...tags, t]);
+    setNewTagText(""); setAddingTag(false);
+  };
+
+  const submit = () => {
+    if (!title.trim()) { setTitleError(true); return; }
+    const pending = newTagText.trim();
+    const finalTags = pending && !tags.includes(pending) ? [...tags, pending] : tags;
+    onSubmit({
+      title: title.trim(), link: link.trim(), duration: duration ? Number(duration) : null,
+      remarks: remarks.trim(), calories: calories ? Number(calories) : null,
+      effectiveness, toughness, tags: finalTags,
+    });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+      <div>
+        <TextInput value={title} onChange={(e) => { setTitle(e.target.value); if (titleError) setTitleError(false); }} placeholder="Exercise title" style={{ border: "none", borderBottom: `1px solid ${titleError ? C.red : C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+        {titleError && <div style={{ fontSize: 11, color: C.red, marginTop: 4 }}>Enter a title before adding.</div>}
+      </div>
+      <TextInput value={link} onChange={(e) => setLink(e.target.value)} placeholder="Link (YouTube, app, optional)" style={{ border: "none", borderBottom: `1px solid ${C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Duration (min)</div>
+          <TextInput type="number" value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="e.g. 20" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Calories burned</div>
+          <TextInput type="number" value={calories} onChange={(e) => setCalories(e.target.value)} placeholder="e.g. 150" />
+        </div>
+      </div>
+      <div style={{ fontSize: 10, color: C.faint, marginTop: -4 }}>Duration can't be auto-filled from a video link \u2014 YouTube's public info doesn't include it.</div>
+      <div style={{ display: "flex", gap: 20 }}>
+        <div>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Effectiveness</div>
+          <StarRow value={effectiveness} onChange={setEffectiveness} />
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Toughness</div>
+          <StarRow value={toughness} onChange={setToughness} />
+        </div>
+      </div>
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Remarks</div>
+        <TextArea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Notes to remember for next time..." rows={2} />
+      </div>
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Body part tags</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {Object.keys(tagColors).map((t) => {
+            const active = tags.includes(t);
+            const color = tagColors[t] || C.gold;
+            return (
+              <button key={t} onClick={() => toggleTag(t)} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${active ? color : C.border}`, background: active ? color : "none", color: active ? C.bg : C.muted }}>
+                <div style={{ width: 6, height: 6, borderRadius: 999, background: active ? C.bg : color }} />
+                {t}
+              </button>
+            );
+          })}
+          <button onClick={() => setAddingTag(!addingTag)} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${addingTag ? C.gold : C.border}`, background: addingTag ? C.gold : "none", color: addingTag ? C.bg : C.muted }}>
+            + New
+          </button>
+        </div>
+        {addingTag && (
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <TextInput value={newTagText} onChange={(e) => setNewTagText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") confirmNewTag(); }} placeholder="New tag name" style={{ flex: 1 }} />
+            <button onClick={confirmNewTag} style={{ background: C.gold, color: C.bg, borderRadius: 10, padding: "0 14px", border: "none" }}><Icon name="check" size={14} /></button>
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <GoldButton onClick={submit}>{initial && initial.id ? "Save changes" : "Add exercise"}</GoldButton>
+        {onCancel && <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>}
+      </div>
+    </div>
+  );
+}
+
+function MealForm({ initial, onCancel, onSubmit }) {
+  const [time, setTime] = useState(initial && initial.time ? initial.time : "12:00");
+  const [label, setLabel] = useState(initial && initial.label ? initial.label : "");
+  const [description, setDescription] = useState(initial && initial.description ? initial.description : "");
+
+  const submit = () => {
+    if (!label.trim()) return;
+    onSubmit({ time, label: label.trim(), description: description.trim() });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px", color: C.text, fontSize: 14, fontFamily: "'JetBrains Mono', monospace", colorScheme: "dark" }} />
+        <div style={{ flex: 1 }}>
+          <TextInput value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (e.g. Lunch)" />
+        </div>
+      </div>
+      <TextArea value={description} onChange={(e) => setDescription(e.target.value)} placeholder={"One line per item..."} rows={4} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <GoldButton onClick={submit}>{initial && initial.id ? "Save changes" : "Add entry"}</GoldButton>
+        {onCancel && <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>}
+      </div>
+    </div>
+  );
+}
+
 // ============ TRADING ============
 function TradingPage() {
   const [data, setData] = useState(() => {
@@ -3114,7 +3580,7 @@ const CHEATSHEET_IMG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
 // ============ BACKUP (real file download) ============
 function downloadBackup() {
-  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data"];
+  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data"];
   const out = {};
   keys.forEach((k) => { out[k] = load(k, null); });
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
@@ -3135,7 +3601,7 @@ function RestoreModal({ onClose }) {
     setStatus("working");
     try {
       const parsed = JSON.parse(jsonText);
-      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data"];
+      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data"];
       keys.forEach((k) => { if (parsed[k] !== undefined && parsed[k] !== null) save(k, parsed[k]); });
       setStatus("done");
       setTimeout(() => window.location.reload(), 900);
@@ -3259,6 +3725,7 @@ const TAB_DEFS = [
   { id: "health", label: "Health", icon: "heart" },
   { id: "habits", label: "Habits", icon: "list-checks" },
   { id: "fasting", label: "Fasting", icon: "flame" },
+  { id: "fitness", label: "Fitness", icon: "activity" },
   { id: "kitchen", label: "Kitchen", icon: "cart" },
   { id: "recipes", label: "Recipes", icon: "book" },
   { id: "trading", label: "Trading", icon: "trending-up" },
@@ -3351,6 +3818,7 @@ function App() {
             {tab === "health" && <HealthPage />}
             {tab === "habits" && <HabitsPage />}
             {tab === "fasting" && <FastingPage />}
+            {tab === "fitness" && <FitnessPage />}
             {tab === "kitchen" && <KitchenPage />}
             {tab === "recipes" && <RecipesPage />}
             {tab === "trading" && <TradingPage />}
