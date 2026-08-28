@@ -625,11 +625,18 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
 
 // ============ HEALTH ============
 function HealthPage() {
-  const [data, setData] = useState(() => { const d = load("health-data", { water: {}, food: {}, glucose: {}, weight: {} }); return { water: d.water || {}, food: d.food || {}, glucose: d.glucose || {}, weight: d.weight || {} }; });
+  const [data, setData] = useState(() => { const d = load("health-data", { water: {}, food: {}, glucose: {}, weight: {}, waterGoal: 2000 }); return { water: d.water || {}, food: d.food || {}, glucose: d.glucose || {}, weight: d.weight || {}, waterGoal: d.waterGoal || 2000 }; });
   const [foodName, setFoodName] = useState("");
   const [foodCal, setFoodCal] = useState("");
   const [viewDate, setViewDate] = useState(todayISO());
-  const waterGoal = 2000;
+  const waterGoal = data.waterGoal;
+  const [showGoalEdit, setShowGoalEdit] = useState(false);
+  const [goalInput, setGoalInput] = useState(String(waterGoal));
+  const saveGoal = () => {
+    const v = Number(goalInput);
+    if (!isNaN(v) && v > 0) setData({ ...data, waterGoal: v });
+    setShowGoalEdit(false);
+  };
 
   useEffect(() => { save("health-data", data); }, [data]);
 
@@ -678,12 +685,22 @@ function HealthPage() {
       </Card>
 
       <Card>
-        <SectionLabel>Water{!isToday ? ` · ${fmtDate(viewDate)}` : ""}</SectionLabel>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <SectionLabel>Water{!isToday ? ` · ${fmtDate(viewDate)}` : ""}</SectionLabel>
+          <button onClick={() => { setGoalInput(String(waterGoal)); setShowGoalEdit(!showGoalEdit); }} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="settings" size={13} /></button>
+        </div>
+        {showGoalEdit && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 11, color: C.muted }}>Daily goal (ml)</span>
+            <TextInput type="number" value={goalInput} onChange={(e) => setGoalInput(e.target.value)} style={{ width: 90, padding: "4px 8px" }} />
+            <button onClick={saveGoal} style={{ color: C.gold, background: "none", border: "none" }}><Icon name="check" size={14} /></button>
+          </div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Icon name="droplet" size={20} color={C.blue} />
             <GoldNumber>{waterVal}</GoldNumber>
-            <span style={{ color: C.muted, fontSize: 14 }}>/ {waterGoal} ml</span>
+            <span style={{ color: C.muted, fontSize: 14 }}>ml</span>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => addWater(-100)} style={{ height: 36, borderRadius: 999, border: `1px solid ${C.border}`, color: C.text, fontSize: 13, background: "none", padding: "0 12px" }}>−100</button>
@@ -693,7 +710,6 @@ function HealthPage() {
         <div style={{ width: "100%", height: 8, background: C.bg, borderRadius: 999, marginTop: 12, overflow: "hidden" }}>
           <div style={{ height: "100%", background: C.blue, width: `${Math.min(100, (waterVal / waterGoal) * 100)}%` }} />
         </div>
-        <div style={{ fontSize: 11, color: C.faint, marginTop: 6 }}>{(waterVal / 1000).toFixed(1)}L of {(waterGoal / 1000).toFixed(0)}L target</div>
       </Card>
 
       <Card>
@@ -2716,8 +2732,10 @@ function FitnessPage() {
   const [editingExId, setEditingExId] = useState(null);
   const [exFilter, setExFilter] = useState(null);
   const [exSort, setExSort] = useState("name");
+  const [exSortDir, setExSortDir] = useState("desc");
 
   const [showMealForm, setShowMealForm] = useState(false);
+  const [openMeals, setOpenMeals] = useState({});
   const [editingMealId, setEditingMealId] = useState(null);
 
   const [viewDate, setViewDate] = useState(todayISO());
@@ -2755,11 +2773,12 @@ function FitnessPage() {
 
   let visibleExercises = exFilter ? exercises.filter((e) => (e.tags || []).includes(exFilter)) : exercises;
   visibleExercises = [...visibleExercises].sort((a, b) => {
-    if (exSort === "name") return a.title.localeCompare(b.title);
-    if (exSort === "effectiveness") return (b.effectiveness || 0) - (a.effectiveness || 0);
-    if (exSort === "toughness") return (b.toughness || 0) - (a.toughness || 0);
-    if (exSort === "calories") return (b.calories || 0) - (a.calories || 0);
-    return 0;
+    let cmp = 0;
+    if (exSort === "name") cmp = b.title.localeCompare(a.title);
+    else if (exSort === "effectiveness") cmp = (b.effectiveness || 0) - (a.effectiveness || 0);
+    else if (exSort === "toughness") cmp = (b.toughness || 0) - (a.toughness || 0);
+    else if (exSort === "calories") cmp = (b.calories || 0) - (a.calories || 0);
+    return exSortDir === "asc" ? -cmp : cmp;
   });
 
   const saveMeal = (fields) => {
@@ -2816,7 +2835,9 @@ function FitnessPage() {
           <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>Sort</span>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {[{ id: "name", label: "Name" }, { id: "effectiveness", label: "Effectiveness" }, { id: "toughness", label: "Toughness" }, { id: "calories", label: "Calories" }].map((s) => (
-              <button key={s.id} onClick={() => setExSort(s.id)} style={{ fontSize: 11, padding: "5px 10px", borderRadius: 999, border: `1px solid ${exSort === s.id ? C.gold : C.border}`, background: exSort === s.id ? C.gold : "none", color: exSort === s.id ? C.bg : C.muted }}>{s.label}</button>
+              <button key={s.id} onClick={() => (exSort === s.id ? setExSortDir(exSortDir === "asc" ? "desc" : "asc") : setExSort(s.id))} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, padding: "5px 10px", borderRadius: 999, border: `1px solid ${exSort === s.id ? C.gold : C.border}`, background: exSort === s.id ? C.gold : "none", color: exSort === s.id ? C.bg : C.muted }}>
+                {s.label} {exSort === s.id && (exSortDir === "asc" ? "\u2191" : "\u2193")}
+              </button>
             ))}
           </div>
         </div>
@@ -2833,40 +2854,56 @@ function FitnessPage() {
           </div>
         )}
 
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>
+          Logging done for: <span style={{ color: C.gold }}>{viewDate === todayISO() ? "Today" : fmtDate(viewDate)}</span> <span style={{ color: C.faint }}>(change the date in Daily Tracking below)</span>
+        </div>
+
         <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: 420, overflowY: "auto" }}>
           {visibleExercises.length === 0 && <EmptyState text="No exercises yet. Add one above." />}
-          {visibleExercises.map((e, i) => (
-            <div key={e.id} style={{ paddingTop: i === 0 ? 0 : 12, borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {e.link ? (
-                    <a href={e.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 14, color: C.blue, textDecoration: "underline" }}>{e.title}</a>
-                  ) : (
-                    <div style={{ fontSize: 14, color: C.text }}>{e.title}</div>
-                  )}
-                  {e.tags && e.tags.length > 0 && (
-                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                      {e.tags.map((tag) => (
-                        <span key={tag} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(tag, tagColors)}25`, color: tagColorFor(tag, tagColors) }}>{tag}</span>
-                      ))}
+          {visibleExercises.map((e, i) => {
+            const doneToday = !!e.log[viewDate];
+            return (
+              <div key={e.id} style={{ paddingTop: i === 0 ? 0 : 12, borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <button onClick={() => toggleExDone(e.id, viewDate)} style={{ marginTop: 2, width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: doneToday ? C.green : "none", border: `1px solid ${doneToday ? C.green : C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {doneToday && <Icon name="check" size={12} color={C.bg} />}
+                  </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {e.link ? (
+                      <a href={e.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 14, color: C.blue, textDecoration: "underline" }}>{e.title}</a>
+                    ) : (
+                      <div style={{ fontSize: 14, color: C.text }}>{e.title}</div>
+                    )}
+                    {e.tags && e.tags.length > 0 && (
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                        {e.tags.map((tag) => (
+                          <span key={tag} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(tag, tagColors)}25`, color: tagColorFor(tag, tagColors) }}>{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginTop: 6, flexWrap: "wrap" }}>
+                      <div>
+                        <div style={{ fontSize: 9, color: C.faint, marginBottom: 2 }}>Effectiveness</div>
+                        <StarRow value={e.effectiveness || 0} readOnly size={13} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 9, color: C.faint, marginBottom: 2 }}>Toughness</div>
+                        <StarRow value={e.toughness || 0} readOnly size={13} />
+                      </div>
                     </div>
-                  )}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
-                    <StarRow value={e.effectiveness || 0} readOnly size={13} />
-                    <StarRow value={e.toughness || 0} readOnly size={13} />
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
+                      {e.duration ? `${e.duration} min` : ""}{e.duration && e.calories ? " · " : ""}{e.calories ? `${e.calories} kcal` : ""}
+                    </div>
+                    {e.remarks && <div style={{ fontSize: 12, color: C.textDim, marginTop: 4, lineHeight: 1.4 }}>{e.remarks}</div>}
                   </div>
-                  <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
-                    {e.duration ? `${e.duration} min` : ""}{e.duration && e.calories ? " · " : ""}{e.calories ? `${e.calories} kcal` : ""}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+                    <button onClick={() => startEditEx(e)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={13} /></button>
+                    <button onClick={() => deleteExercise(e.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
                   </div>
-                  {e.remarks && <div style={{ fontSize: 12, color: C.textDim, marginTop: 4, lineHeight: 1.4 }}>{e.remarks}</div>}
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
-                  <button onClick={() => startEditEx(e)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={13} /></button>
-                  <button onClick={() => deleteExercise(e.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Card>
 
@@ -2878,23 +2915,34 @@ function FitnessPage() {
           </button>
         </div>
         {showMealForm && <MealForm initial={editingMeal} onCancel={() => { setShowMealForm(false); setEditingMealId(null); }} onSubmit={saveMeal} />}
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {sortedMeals.map((m, i) => (
-            <div key={m.id} style={{ paddingTop: i === 0 ? 0 : 12, borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: C.gold, fontFamily: "'JetBrains Mono', monospace" }}>{m.time} <span style={{ color: C.text, fontFamily: "'Inter', sans-serif", fontWeight: 500 }}>{m.label}</span></div>
-                  <div style={{ fontSize: 12, color: C.textDim, marginTop: 4, lineHeight: 1.5 }}>
-                    {m.description.split("\n").map((line, li) => <div key={li}>{line}</div>)}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {sortedMeals.map((m, i) => {
+            const lines = m.description.split("\n").filter(Boolean);
+            const open = !!openMeals[m.id];
+            return (
+              <div key={m.id} style={{ paddingTop: i === 0 ? 0 : 10, borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <button onClick={() => setOpenMeals((o) => ({ ...o, [m.id]: !o[m.id] }))} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 13, color: C.gold, fontFamily: "'JetBrains Mono', monospace" }}>{m.time}</span>
+                      <span style={{ fontSize: 14, color: C.text, fontWeight: 500 }}>{m.label}</span>
+                      <Icon name={open ? "chevron-left" : "chevron-right"} size={12} color={C.faint} style={{ transform: open ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+                    </div>
+                    {!open && lines[0] && <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>{lines[0]}{lines.length > 1 ? "..." : ""}</div>}
+                    {open && (
+                      <div style={{ fontSize: 12, color: C.textDim, marginTop: 6, lineHeight: 1.6 }}>
+                        {lines.map((line, li) => <div key={li}>• {line}</div>)}
+                      </div>
+                    )}
+                  </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+                    <button onClick={() => { setEditingMealId(m.id); setShowMealForm(true); }} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={13} /></button>
+                    <button onClick={() => deleteMeal(m.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
                   </div>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
-                  <button onClick={() => { setEditingMealId(m.id); setShowMealForm(true); }} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={13} /></button>
-                  <button onClick={() => deleteMeal(m.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
-                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Card>
 
@@ -2968,26 +3016,6 @@ function FitnessPage() {
         ) : (
           <div style={{ fontSize: 12, color: C.green }}>Target met for today \u2014 nice work.</div>
         )}
-
-        {exercises.length > 0 && (
-          <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
-            <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>Mark exercises done {isToday ? "today" : `on ${fmtDate(viewDate)}`}</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {exercises.map((e) => {
-                const checked = !!e.log[viewDate];
-                return (
-                  <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <button onClick={() => toggleExDone(e.id, viewDate)} style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: checked ? C.green : "none", border: `1px solid ${checked ? C.green : C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      {checked && <Icon name="check" size={12} color={C.bg} />}
-                    </button>
-                    <span style={{ fontSize: 13, color: checked ? C.faint : C.text, textDecoration: checked ? "line-through" : "none", flex: 1 }}>{e.title}</span>
-                    <span style={{ fontSize: 11, color: C.muted, fontFamily: "'JetBrains Mono', monospace" }}>{e.calories || 0} kcal</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </Card>
     </div>
   );
@@ -3060,7 +3088,7 @@ function ExerciseForm({ tagColors, initial, onCancel, onSubmit }) {
       <div>
         <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Body part tags</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          {Object.keys(tagColors).map((t) => {
+          {Array.from(new Set([...Object.keys(tagColors), ...tags])).map((t) => {
             const active = tags.includes(t);
             const color = tagColors[t] || C.gold;
             return (
