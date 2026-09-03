@@ -145,7 +145,16 @@ function CalendarPicker({ month, onMonthChange, selected, onSelect }) {
           if (!d) return <div key={i} />;
           const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
           const isSel = iso === selected;
-          return <button key={i} onClick={() => onSelect(iso)} style={{ aspectRatio: "1", borderRadius: 8, fontSize: 12, border: "none", background: isSel ? C.gold : "transparent", color: isSel ? C.bg : C.text }}>{d}</button>;
+          const isToday = iso === todayISO();
+          return (
+            <button key={i} onClick={() => onSelect(iso)} style={{
+              aspectRatio: "1", borderRadius: 8, fontSize: 12, border: isToday && !isSel ? `1px solid ${C.gold}` : "none",
+              background: isSel ? C.gold : "transparent", color: isSel ? C.bg : isToday ? C.gold : C.text,
+              fontWeight: isToday ? 700 : 400,
+            }}>
+              {d}
+            </button>
+          );
         })}
       </div>
     </div>
