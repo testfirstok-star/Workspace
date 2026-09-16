@@ -89,6 +89,7 @@ function Icon({ name, size = 18, color = "currentColor", style }) {
     case "settings": return <svg {...p}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>;
     case "arrow-left": return <svg {...p}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>;
     case "cart": return <svg {...p}><circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" /><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" /></svg>;
+    case "package": return <svg {...p}><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" /><path d="M3 8l9 5 9-5" /><path d="M12 13v8" /></svg>;
     case "book": return <svg {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>;
     case "activity": return <svg {...p}><polyline points="2 12 6 12 9 4 13 20 16 12 22 12" /></svg>;
     default: return null;
@@ -165,9 +166,16 @@ function DateField({ value, onChange, placeholder = "Pick a date" }) {
   const [month, setMonth] = useState(value ? new Date(value + "T00:00:00") : new Date());
   return (
     <div>
-      <button onClick={() => setOpen(!open)} style={{ width: "100%", textAlign: "left", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 12px", fontSize: 14, color: value ? C.text : C.faint, boxSizing: "border-box" }}>
-        {value ? fmtDate(value) : placeholder}
-      </button>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button onClick={() => setOpen(!open)} style={{ flex: 1, textAlign: "left", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 12px", fontSize: 14, color: value ? C.text : C.faint, boxSizing: "border-box" }}>
+          {value ? fmtDate(value) : placeholder}
+        </button>
+        {value && (
+          <button onClick={() => { onChange(""); setOpen(false); }} style={{ flexShrink: 0, color: C.faint, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 12px" }}>
+            <Icon name="x" size={14} />
+          </button>
+        )}
+      </div>
       {open && <div style={{ marginTop: 8 }}><CalendarPicker month={month} onMonthChange={setMonth} selected={value} onSelect={(iso) => { onChange(iso); setOpen(false); }} /></div>}
     </div>
   );
@@ -1749,8 +1757,9 @@ function CountdownCalendarGrid({ month, onMonthChange, items, entries, tagColors
           const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
           const cellDate = new Date(y, m, d);
           const isSel = iso === selected;
-          const fromItems = items.filter((it) => isVisible(it.tag) && occursOnDate(it, cellDate));
           const fromEntries = (entries || []).filter((e) => isVisible(e.tag) && iso >= e.date && iso <= (e.endDate || e.date));
+          const linkedIds = fromEntries.filter((e) => e.linkedCountdownId).map((e) => e.linkedCountdownId);
+          const fromItems = items.filter((it) => isVisible(it.tag) && occursOnDate(it, cellDate) && !linkedIds.includes(it.id));
           const dayItems = [...fromItems, ...fromEntries].slice(0, 3);
           const rangeSpan = fromEntries.find((e) => e.endDate && e.endDate !== e.date);
           const tint = rangeSpan ? `${tagColorFor(rangeSpan.tag, tagColors)}30` : "transparent";
@@ -3181,6 +3190,354 @@ function MealForm({ initial, onCancel, onSubmit }) {
   );
 }
 
+// ============ INVENTORY ============
+function predictDuration(item) {
+  const durations = (item.history || []).map((h) => (new Date(h.end).getTime() - new Date(h.start).getTime()) / 86400000).filter((d) => d > 0);
+  if (durations.length === 0) {
+    return item.expectedDuration ? { avg: Number(item.expectedDuration), min: null, max: null, count: 0, source: "estimate" } : null;
+  }
+  const avg = durations.reduce((a, b) => a + b, 0) / durations.length;
+  return { avg, min: Math.min(...durations), max: Math.max(...durations), count: durations.length, source: "history" };
+}
+function stockedUntilInfo(item, prediction, now) {
+  if (!item.active && (item.stock || 0) <= 0) return { none: true };
+  if (!prediction) return null;
+  const avg = prediction.avg;
+  let daysLeftInActive = 0;
+  if (item.active) {
+    const daysUsed = (now - new Date(item.active.start).getTime()) / 86400000;
+    daysLeftInActive = Math.max(0, avg - daysUsed);
+  }
+  const totalDaysLeft = daysLeftInActive + (item.stock || 0) * avg;
+  return { date: new Date(now + totalDaysLeft * 86400000), totalDaysLeft };
+}
+
+function InventoryPage() {
+  const [data, setData] = useState(() => load("inventory-data", { items: [], tagColors: {} }));
+  useEffect(() => { save("inventory-data", data); }, [data]);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(t); }, []);
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [catFilter, setCatFilter] = useState(null);
+  const [sortMode, setSortMode] = useState("soon");
+  const [openHistory, setOpenHistory] = useState({});
+  const [startingId, setStartingId] = useState(null);
+  const [finishingId, setFinishingId] = useState(null);
+  const [editingUnit, setEditingUnit] = useState(null);
+  const [addingStockId, setAddingStockId] = useState(null);
+  const [stockAmount, setStockAmount] = useState("1");
+
+  const items = data.items;
+  const tagColors = data.tagColors;
+  const tags = Object.keys(tagColors);
+  const editingItem = editingId ? items.find((i) => i.id === editingId) : null;
+
+  const saveItem = (fields) => {
+    setData((d) => {
+      let tagColors = d.tagColors;
+      if (fields.category && !tagColors[fields.category]) {
+        const used = Object.keys(tagColors);
+        tagColors = { ...tagColors, [fields.category]: COUNTDOWN_PALETTE[used.length % COUNTDOWN_PALETTE.length] };
+      }
+      let items;
+      if (editingId) {
+        items = d.items.map((i) => (i.id === editingId ? { ...i, ...fields } : i));
+      } else {
+        items = [{ id: Date.now(), active: null, history: [], ...fields }, ...d.items];
+      }
+      return { ...d, items, tagColors };
+    });
+    setShowForm(false); setEditingId(null);
+  };
+  const deleteItem = (id) => setData((d) => ({ ...d, items: d.items.filter((i) => i.id !== id) }));
+  const startEditItem = (i) => { setEditingId(i.id); setShowForm(true); };
+  const resetForm = () => { setEditingId(null); setShowForm(false); };
+  const addStock = (itemId, amount) => {
+    setData((d) => ({ ...d, items: d.items.map((i) => (i.id === itemId ? { ...i, stock: (i.stock || 0) + amount } : i)) }));
+    setAddingStockId(null); setStockAmount("1");
+  };
+
+  const startUnit = (itemId, startISO) => {
+    setData((d) => ({
+      ...d,
+      items: d.items.map((i) => (i.id === itemId ? { ...i, active: { start: startISO }, stock: i.stock > 0 ? i.stock - 1 : i.stock } : i)),
+    }));
+    setStartingId(null);
+  };
+  const finishUnit = (itemId, endISO) => {
+    setData((d) => ({
+      ...d,
+      items: d.items.map((i) => (i.id === itemId && i.active ? { ...i, active: null, history: [{ id: Date.now(), start: i.active.start, end: endISO }, ...i.history] } : i)),
+    }));
+    setFinishingId(null);
+  };
+  const updateHistoryUnit = (itemId, unitId, fields) => {
+    setData((d) => ({
+      ...d,
+      items: d.items.map((i) => (i.id === itemId ? { ...i, history: i.history.map((h) => (h.id === unitId ? { ...h, ...fields } : h)) } : i)),
+    }));
+    setEditingUnit(null);
+  };
+  const deleteHistoryUnit = (itemId, unitId) => setData((d) => ({
+    ...d,
+    items: d.items.map((i) => (i.id === itemId ? { ...i, history: i.history.filter((h) => h.id !== unitId) } : i)),
+  }));
+
+  let visibleItems = catFilter ? items.filter((i) => i.category === catFilter) : items;
+  const withInfo = visibleItems.map((i) => {
+    const prediction = predictDuration(i);
+    const stocked = stockedUntilInfo(i, prediction, now);
+    return { ...i, prediction, stocked };
+  });
+  withInfo.sort((a, b) => {
+    if (sortMode === "name") return a.title.localeCompare(b.title);
+    const aDays = a.stocked && !a.stocked.none ? a.stocked.totalDaysLeft : Infinity;
+    const bDays = b.stocked && !b.stocked.none ? b.stocked.totalDaysLeft : Infinity;
+    return aDays - bDays;
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
+      <PageTitle>Inventory</PageTitle>
+
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <SectionLabel>Items</SectionLabel>
+          <button onClick={() => (showForm ? resetForm() : (setEditingId(null), setShowForm(true)))} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+            <Icon name={showForm ? "x" : "plus"} size={14} /> {showForm ? "Cancel" : "Add"}
+          </button>
+        </div>
+
+        {showForm && <ItemForm tagColors={tagColors} initial={editingItem} onCancel={resetForm} onSubmit={saveItem} />}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>Sort</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[{ id: "soon", label: "Running Low" }, { id: "name", label: "Name" }].map((s) => (
+              <button key={s.id} onClick={() => setSortMode(s.id)} style={{ fontSize: 11, padding: "5px 10px", borderRadius: 999, border: `1px solid ${sortMode === s.id ? C.gold : C.border}`, background: sortMode === s.id ? C.gold : "none", color: sortMode === s.id ? C.bg : C.muted }}>{s.label}</button>
+            ))}
+          </div>
+        </div>
+
+        {tags.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 2 }}>
+            <button onClick={() => setCatFilter(null)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${catFilter === null ? C.gold : C.border}`, background: catFilter === null ? C.gold : "none", color: catFilter === null ? C.bg : C.muted }}>All</button>
+            {tags.map((tag) => (
+              <button key={tag} onClick={() => setCatFilter(catFilter === tag ? null : tag)} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${catFilter === tag ? tagColors[tag] : C.border}`, background: catFilter === tag ? tagColors[tag] : "none", color: catFilter === tag ? C.bg : C.muted }}>
+                <div style={{ width: 6, height: 6, borderRadius: 999, background: catFilter === tag ? C.bg : tagColors[tag] }} />
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {withInfo.length === 0 && <EmptyState text="No items yet. Add one above." />}
+          {withInfo.map((i, idx) => {
+            const daysUsed = i.active ? (now - new Date(i.active.start).getTime()) / 86400000 : 0;
+            const open = !!openHistory[i.id];
+            return (
+              <div key={i.id} style={{ paddingTop: idx === 0 ? 0 : 14, borderTop: idx === 0 ? "none" : `1px solid ${C.border}` }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, color: C.text }}>{i.title}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                      {i.category && (
+                        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(i.category, tagColors)}25`, color: tagColorFor(i.category, tagColors) }}>{i.category}</span>
+                      )}
+                      <span style={{ fontSize: 11, color: C.muted }}>Stock: {i.stock || 0}</span>
+                      {addingStockId !== i.id && (
+                        <button onClick={() => { setAddingStockId(i.id); setStockAmount("1"); }} style={{ fontSize: 10, color: C.gold, background: "none", border: `1px solid ${C.border}`, borderRadius: 999, padding: "2px 8px" }}>+ Stock</button>
+                      )}
+                    </div>
+
+                    {addingStockId === i.id && (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+                        <TextInput type="number" value={stockAmount} onChange={(e) => setStockAmount(e.target.value)} style={{ width: 70, padding: "4px 8px" }} />
+                        <button onClick={() => addStock(i.id, Number(stockAmount) || 0)} style={{ fontSize: 11, color: C.bg, background: C.gold, border: "none", borderRadius: 999, padding: "5px 12px", fontWeight: 600 }}>Add</button>
+                        <button onClick={() => setAddingStockId(null)} style={{ fontSize: 11, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 999, padding: "5px 12px" }}>Cancel</button>
+                      </div>
+                    )}
+
+                    <div style={{ fontSize: 12, color: C.textDim, marginTop: 6 }}>
+                      {i.active ? `In use for ${Math.floor(daysUsed)}d` : "Not currently in use"}
+                    </div>
+
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
+                      {i.prediction
+                        ? i.prediction.source === "history"
+                          ? (i.prediction.count > 1
+                              ? `Lasts ~${Math.round(i.prediction.avg)}d (range ${Math.round(i.prediction.min)}\u2013${Math.round(i.prediction.max)}d, based on ${i.prediction.count})`
+                              : `Lasts ~${Math.round(i.prediction.avg)}d (based on 1 unit so far)`)
+                          : `Estimated ~${Math.round(i.prediction.avg)}d (no history yet)`
+                        : "Not enough data yet"}
+                    </div>
+
+                    <div style={{ fontSize: 12, marginTop: 4, fontWeight: 500, color: i.stocked && i.stocked.none ? C.red : i.stocked ? C.gold : C.faint }}>
+                      {i.stocked && i.stocked.none
+                        ? "Out of stock \u2014 restock soon"
+                        : i.stocked
+                        ? `Stocked until ~${fmtDate(localISO(i.stocked.date))}`
+                        : ""}
+                    </div>
+
+                    <div style={{ marginTop: 10 }}>
+                      {i.active ? (
+                        finishingId === i.id ? (
+                          <UnitTimeForm label="Finish time" onCancel={() => setFinishingId(null)} onSubmit={(iso) => finishUnit(i.id, iso)} />
+                        ) : (
+                          <button onClick={() => setFinishingId(i.id)} style={{ fontSize: 12, color: C.bg, background: C.gold, border: "none", borderRadius: 999, padding: "6px 14px", fontWeight: 600 }}>Mark as finished</button>
+                        )
+                      ) : startingId === i.id ? (
+                        <UnitTimeForm label="Start time" onCancel={() => setStartingId(null)} onSubmit={(iso) => startUnit(i.id, iso)} />
+                      ) : (
+                        <button onClick={() => setStartingId(i.id)} style={{ fontSize: 12, color: C.bg, background: C.gold, border: "none", borderRadius: 999, padding: "6px 14px", fontWeight: 600 }}>Start new unit</button>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+                    <button onClick={() => startEditItem(i)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={13} /></button>
+                    <button onClick={() => deleteItem(i.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={13} /></button>
+                  </div>
+                </div>
+
+                {i.history.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <button onClick={() => setOpenHistory((o) => ({ ...o, [i.id]: !o[i.id] }))} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: C.muted, fontSize: 11 }}>
+                      History ({i.history.length}) <Icon name={open ? "chevron-left" : "chevron-right"} size={11} style={{ transform: open ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+                    </button>
+                    {open && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                        {[...i.history].sort((a, b) => b.end.localeCompare(a.end)).map((h) => (
+                          <div key={h.id}>
+                            {editingUnit === h.id ? (
+                              <UnitEditForm initial={h} onCancel={() => setEditingUnit(null)} onSubmit={(fields) => updateHistoryUnit(i.id, h.id, fields)} />
+                            ) : (
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ fontSize: 11, color: C.textDim, flex: 1 }}>
+                                  {fmtDateTime(h.start)} \u2192 {fmtDateTime(h.end)} <span style={{ color: C.muted }}>({fmtDuration(new Date(h.end) - new Date(h.start))})</span>
+                                </span>
+                                <button onClick={() => setEditingUnit(h.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="pencil" size={11} /></button>
+                                <button onClick={() => deleteHistoryUnit(i.id, h.id)} style={{ color: C.faint, background: "none", border: "none" }}><Icon name="trash" size={11} /></button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function UnitTimeForm({ label, onCancel, onSubmit }) {
+  const [val, setVal] = useState(nowDateTimeLocal());
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
+      <div style={{ fontSize: 11, color: C.muted }}>{label}</div>
+      <DateTimeField value={val} onChange={setVal} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => onSubmit(val)} style={{ fontSize: 12, color: C.bg, background: C.gold, border: "none", borderRadius: 999, padding: "6px 14px", fontWeight: 600 }}>Confirm</button>
+        <button onClick={onCancel} style={{ fontSize: 12, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 999, padding: "6px 14px" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function UnitEditForm({ initial, onCancel, onSubmit }) {
+  const [start, setStart] = useState(toDateTimeLocal(initial.start));
+  const [end, setEnd] = useState(toDateTimeLocal(initial.end));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 10 }}>
+      <div>
+        <div style={{ fontSize: 10, color: C.muted, marginBottom: 3 }}>Start</div>
+        <DateTimeField value={start} onChange={setStart} />
+      </div>
+      <div>
+        <div style={{ fontSize: 10, color: C.muted, marginBottom: 3 }}>End</div>
+        <DateTimeField value={end} onChange={setEnd} />
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => onSubmit({ start, end })} style={{ fontSize: 12, color: C.bg, background: C.gold, border: "none", borderRadius: 999, padding: "6px 14px", fontWeight: 600 }}>Save</button>
+        <button onClick={onCancel} style={{ fontSize: 12, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 999, padding: "6px 14px" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function ItemForm({ tagColors, initial, onCancel, onSubmit }) {
+  const [title, setTitle] = useState(initial && initial.title ? initial.title : "");
+  const [category, setCategory] = useState(initial && initial.category ? initial.category : "");
+  const [stock, setStock] = useState(initial && initial.stock != null ? String(initial.stock) : "0");
+  const [expectedDuration, setExpectedDuration] = useState(initial && initial.expectedDuration ? String(initial.expectedDuration) : "");
+  const [newCatText, setNewCatText] = useState("");
+  const [addingCat, setAddingCat] = useState(false);
+  const [titleError, setTitleError] = useState(false);
+
+  const submit = () => {
+    if (!title.trim()) { setTitleError(true); return; }
+    const finalCat = (addingCat && newCatText.trim()) ? newCatText.trim() : category;
+    onSubmit({
+      title: title.trim(), category: finalCat || null, stock: stock ? Number(stock) : 0,
+      expectedDuration: expectedDuration ? Number(expectedDuration) : null,
+    });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+      <div>
+        <TextInput value={title} onChange={(e) => { setTitle(e.target.value); if (titleError) setTitleError(false); }} placeholder="Item name" style={{ border: "none", borderBottom: `1px solid ${titleError ? C.red : C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+        {titleError && <div style={{ fontSize: 11, color: C.red, marginTop: 4 }}>Enter a name before adding.</div>}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Spare stock on hand</div>
+          <TextInput type="number" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="0" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Expected duration (days)</div>
+          <TextInput type="number" value={expectedDuration} onChange={(e) => setExpectedDuration(e.target.value)} placeholder="Optional" />
+        </div>
+      </div>
+      <div style={{ fontSize: 10, color: C.faint, marginTop: -4 }}>Expected duration is only used as an estimate until you've finished at least one unit \u2014 after that, actual history takes over.</div>
+      <div>
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Category</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {Object.keys(tagColors).map((t) => {
+            const active = !addingCat && category === t;
+            return (
+              <button key={t} onClick={() => { setCategory(t); setAddingCat(false); }} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${active ? tagColors[t] : C.border}`, background: active ? tagColors[t] : "none", color: active ? C.bg : C.muted }}>
+                <div style={{ width: 6, height: 6, borderRadius: 999, background: active ? C.bg : tagColors[t] }} />
+                {t}
+              </button>
+            );
+          })}
+          <button onClick={() => setAddingCat(!addingCat)} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${addingCat ? C.gold : C.border}`, background: addingCat ? C.gold : "none", color: addingCat ? C.bg : C.muted }}>
+            + New
+          </button>
+        </div>
+        {addingCat && (
+          <div style={{ marginTop: 8 }}>
+            <TextInput value={newCatText} onChange={(e) => setNewCatText(e.target.value)} placeholder="New category name" />
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <GoldButton onClick={submit}>{initial && initial.id ? "Save changes" : "Add item"}</GoldButton>
+        {onCancel && <button onClick={onCancel} style={{ fontSize: 13, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 16px" }}>Cancel</button>}
+      </div>
+    </div>
+  );
+}
+
 // ============ TRADING ============
 function TradingPage() {
   const [data, setData] = useState(() => {
@@ -3345,6 +3702,8 @@ function TradingPage() {
         toggleShareTransferred={toggleShareTransferred}
         deleteShareEntry={deleteShareEntry}
       />
+
+      <KellySection />
 
       <LogSection entries={entries} openForm={openForm} deleteEntry={deleteEntry} />
     </div>
@@ -3570,6 +3929,97 @@ function ProfitSharingSection({ shareEntries, addShareEntry, toggleShareTransfer
   );
 }
 
+function KellySection() {
+  const [open, setOpen] = useState(true);
+  const [mode, setMode] = useState("trading");
+  const [winRate, setWinRate] = useState("");
+  const [rewardRisk, setRewardRisk] = useState("");
+  const [winProb, setWinProb] = useState("");
+  const [odds, setOdds] = useState("");
+
+  let f = null;
+  if (mode === "trading") {
+    const W = Number(winRate) / 100, R = Number(rewardRisk);
+    if (winRate !== "" && rewardRisk !== "" && R > 0) f = W - (1 - W) / R;
+  } else {
+    const p = Number(winProb) / 100, b = Number(odds);
+    if (winProb !== "" && odds !== "" && b > 0) f = p - (1 - p) / b;
+  }
+
+  return (
+    <Card>
+      <button onClick={() => setOpen(!open)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+        <SectionLabel>Kelly Criterion</SectionLabel>
+        <Icon name={open ? "chevron-left" : "chevron-right"} size={14} color={C.muted} style={{ transform: open ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+      </button>
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            <button onClick={() => setMode("trading")} style={{ flex: 1, fontSize: 12, padding: "8px 0", borderRadius: 999, border: `1px solid ${mode === "trading" ? C.gold : C.border}`, background: mode === "trading" ? C.gold : "none", color: mode === "trading" ? C.bg : C.muted, fontWeight: mode === "trading" ? 600 : 400 }}>
+              Win % + Reward:Risk
+            </button>
+            <button onClick={() => setMode("odds")} style={{ flex: 1, fontSize: 12, padding: "8px 0", borderRadius: 999, border: `1px solid ${mode === "odds" ? C.gold : C.border}`, background: mode === "odds" ? C.gold : "none", color: mode === "odds" ? C.bg : C.muted, fontWeight: mode === "odds" ? 600 : 400 }}>
+              Win % + Odds
+            </button>
+          </div>
+
+          {mode === "trading" ? (
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Win rate (%)</div>
+                <TextInput type="number" value={winRate} onChange={(e) => setWinRate(e.target.value)} placeholder="e.g. 60" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Reward:Risk</div>
+                <TextInput type="number" value={rewardRisk} onChange={(e) => setRewardRisk(e.target.value)} placeholder="e.g. 2" />
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Win probability (%)</div>
+                <TextInput type="number" value={winProb} onChange={(e) => setWinProb(e.target.value)} placeholder="e.g. 55" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Payout odds</div>
+                <TextInput type="number" value={odds} onChange={(e) => setOdds(e.target.value)} placeholder="e.g. 1.5" />
+              </div>
+            </div>
+          )}
+
+          {f === null ? (
+            <div style={{ fontSize: 12, color: C.faint, textAlign: "center", padding: "8px 0" }}>Enter both values to calculate.</div>
+          ) : f <= 0 ? (
+            <div style={{ fontSize: 12, color: C.red, textAlign: "center", padding: "8px 0", lineHeight: 1.5 }}>
+              Negative edge at these numbers \u2014 the math doesn't favor a position here. Recommended size: 0%.
+            </div>
+          ) : (
+            <div>
+              <div style={{ textAlign: "center", marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Full Kelly</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 28, color: C.gold, marginTop: 4 }}>{(f * 100).toFixed(1)}%</div>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1, textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Half Kelly</div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: C.textDim, marginTop: 4 }}>{(f * 50).toFixed(1)}%</div>
+                </div>
+                <div style={{ flex: 1, textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Quarter Kelly</div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: C.textDim, marginTop: 4 }}>{(f * 25).toFixed(1)}%</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 10, color: C.faint, marginTop: 14, lineHeight: 1.5 }}>
+                Full Kelly is mathematically optimal but volatile in practice \u2014 many traders use half or quarter Kelly for a smoother ride. This assumes your win rate and reward:risk stay consistent, which real markets don't guarantee.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ============ MARKET TREND (TradingView) ============
 function TradingViewWidget({ src, config, height = 400 }) {
   const container = useRef(null);
@@ -3645,7 +4095,7 @@ const CHEATSHEET_IMG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
 // ============ BACKUP (real file download) ============
 function downloadBackup() {
-  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data"];
+  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data", "inventory-data"];
   const out = {};
   keys.forEach((k) => { out[k] = load(k, null); });
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
@@ -3666,7 +4116,7 @@ function RestoreModal({ onClose }) {
     setStatus("working");
     try {
       const parsed = JSON.parse(jsonText);
-      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data"];
+      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data", "inventory-data"];
       keys.forEach((k) => { if (parsed[k] !== undefined && parsed[k] !== null) save(k, parsed[k]); });
       setStatus("done");
       setTimeout(() => window.location.reload(), 900);
@@ -3793,6 +4243,7 @@ const TAB_DEFS = [
   { id: "fitness", label: "Fitness", icon: "activity" },
   { id: "kitchen", label: "Kitchen", icon: "cart" },
   { id: "recipes", label: "Recipes", icon: "book" },
+  { id: "inventory", label: "Inventory", icon: "package" },
   { id: "trading", label: "Trading", icon: "trending-up" },
   { id: "countdown", label: "Countdown", icon: "calendar" },
 ];
@@ -3886,6 +4337,7 @@ function App() {
             {tab === "fitness" && <FitnessPage />}
             {tab === "kitchen" && <KitchenPage onNavigate={setTab} />}
             {tab === "recipes" && <RecipesPage />}
+            {tab === "inventory" && <InventoryPage />}
             {tab === "trading" && <TradingPage />}
             {tab === "trend" && <TrendPage />}
             {tab === "countdown" && <CountdownPage />}
