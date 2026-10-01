@@ -90,6 +90,7 @@ function Icon({ name, size = 18, color = "currentColor", style }) {
     case "arrow-left": return <svg {...p}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>;
     case "cart": return <svg {...p}><circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" /><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" /></svg>;
     case "package": return <svg {...p}><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" /><path d="M3 8l9 5 9-5" /><path d="M12 13v8" /></svg>;
+    case "target": return <svg {...p}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1" /></svg>;
     case "book": return <svg {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>;
     case "activity": return <svg {...p}><polyline points="2 12 6 12 9 4 13 20 16 12 22 12" /></svg>;
     default: return null;
@@ -185,310 +186,174 @@ function DateField({ value, onChange, placeholder = "Pick a date" }) {
 function WorkPage() {
   const [notes, setNotes] = useState(() => load("journal-data", { entries: [] }).entries);
   const [taskData, setTaskData] = useState(() => {
-    const d = load("tasks-data", { tasks: [], tagColors: {} });
-    return { tasks: d.tasks || [], tagColors: d.tagColors || {} };
+    const d = load("tasks-data", { sections: [], topics: [], tasks: [], tagColors: {} });
+    let sections = d.sections || [];
+    let topics = d.topics || [];
+    let tasks = d.tasks || [];
+    const tagColors = d.tagColors || {};
+    const topicIds = new Set(topics.map((t) => t.id));
+    const hasOrphans = tasks.some((t) => !t.topicId || !topicIds.has(t.topicId));
+    if (sections.length === 0 || hasOrphans) {
+      let fallbackSection = sections.find((s) => s.id === "default-section");
+      let fallbackTopic = topics.find((t) => t.id === "default-topic");
+      if (!fallbackSection) { fallbackSection = { id: "default-section", name: "General", open: true }; sections = [...sections, fallbackSection]; }
+      if (!fallbackTopic) { fallbackTopic = { id: "default-topic", sectionId: fallbackSection.id, name: "Tasks", open: true }; topics = [...topics, fallbackTopic]; }
+      tasks = tasks.map((t) => (t.topicId && topicIds.has(t.topicId) ? t : { ...t, topicId: fallbackTopic.id }));
+    }
+    return { sections, topics, tasks, tagColors };
   });
   const [noteText, setNoteText] = useState("");
-  const [showTaskForm, setShowTaskForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [dueFilter, setDueFilter] = useState("all");
-  const [taskTagFilter, setTaskTagFilter] = useState(null);
-  const [sortMode, setSortMode] = useState("priority");
+  const [addingSection, setAddingSection] = useState(false);
+  const [newSectionName, setNewSectionName] = useState("");
   const [tagManageOpen, setTagManageOpen] = useState(false);
   const [colorPickerTag, setColorPickerTag] = useState(null);
-  const [completedOpen, setCompletedOpen] = useState(false);
-  const [dragId, setDragId] = useState(null);
-  const [dragY, setDragY] = useState(0);
-  const dragInfo = useRef({});
-  const lastIndexRef = useRef(0);
-  const rowRefs = useRef({});
+  const idSeq = useRef(0);
+  const genId = () => `${Date.now()}-${idSeq.current++}`;
 
   useEffect(() => { save("journal-data", { entries: notes }); }, [notes]);
   useEffect(() => { save("tasks-data", taskData); }, [taskData]);
 
+  const sections = taskData.sections;
+  const topics = taskData.topics;
   const tasks = taskData.tasks;
   const taskTagColors = taskData.tagColors;
 
   const addNote = () => { if (!noteText.trim()) return; setNotes([{ id: Date.now(), date: todayISO(), text: noteText.trim() }, ...notes]); setNoteText(""); };
   const deleteNote = (id) => setNotes(notes.filter((e) => e.id !== id));
 
-  const resetTaskForm = () => { setEditingId(null); setShowTaskForm(false); };
-  const startEditTask = (t) => { setEditingId(t.id); setShowTaskForm(true); };
-
-  const saveTask = (fields) => {
+  // ---- Section ops ----
+  const addSection = (name) => {
+    const n = name.trim(); if (!n) return;
+    setTaskData((d) => ({ ...d, sections: [...d.sections, { id: genId(), name: n, open: true }] }));
+  };
+  const renameSection = (id, name) => {
+    const n = name.trim(); if (!n) return;
+    setTaskData((d) => ({ ...d, sections: d.sections.map((s) => (s.id === id ? { ...s, name: n } : s)) }));
+  };
+  const deleteSection = (id) => {
     setTaskData((d) => {
-      let tagColors = d.tagColors;
-      (fields.tags || []).forEach((t) => {
-        if (!tagColors[t]) {
-          const used = Object.keys(tagColors);
-          tagColors = { ...tagColors, [t]: COUNTDOWN_PALETTE[used.length % COUNTDOWN_PALETTE.length] };
-        }
-      });
-      let tasks;
-      if (editingId) {
-        tasks = d.tasks.map((t) => (t.id === editingId ? { ...t, ...fields } : t));
-      } else {
-        tasks = [{ id: Date.now(), ...fields, done: false }, ...d.tasks];
+      const topicIdsToRemove = d.topics.filter((t) => t.sectionId === id).map((t) => t.id);
+      return {
+        ...d,
+        sections: d.sections.filter((s) => s.id !== id),
+        topics: d.topics.filter((t) => t.sectionId !== id),
+        tasks: d.tasks.filter((t) => !topicIdsToRemove.includes(t.topicId)),
+      };
+    });
+  };
+  const toggleSectionOpen = (id) => setTaskData((d) => ({ ...d, sections: d.sections.map((s) => (s.id === id ? { ...s, open: s.open === false } : s)) }));
+
+  // ---- Topic ops ----
+  const addTopic = (sectionId, name) => {
+    const n = name.trim(); if (!n) return;
+    setTaskData((d) => ({ ...d, topics: [...d.topics, { id: genId(), sectionId, name: n, open: true }] }));
+  };
+  const renameTopic = (id, name) => {
+    const n = name.trim(); if (!n) return;
+    setTaskData((d) => ({ ...d, topics: d.topics.map((t) => (t.id === id ? { ...t, name: n } : t)) }));
+  };
+  const deleteTopic = (id) => {
+    setTaskData((d) => ({ ...d, topics: d.topics.filter((t) => t.id !== id), tasks: d.tasks.filter((t) => t.topicId !== id) }));
+  };
+  const toggleTopicOpen = (id) => setTaskData((d) => ({ ...d, topics: d.topics.map((t) => (t.id === id ? { ...t, open: t.open === false } : t)) }));
+
+  // ---- Task ops (flat array, scoped by topicId) ----
+  const registerTags = (tagColors, tagList) => {
+    let tc = tagColors;
+    (tagList || []).forEach((t) => {
+      if (!tc[t]) {
+        const used = Object.keys(tc);
+        tc = { ...tc, [t]: COUNTDOWN_PALETTE[used.length % COUNTDOWN_PALETTE.length] };
       }
-      return { ...d, tasks, tagColors };
     });
-    resetTaskForm();
+    return tc;
   };
-
-  const setTasks = (updater) => setTaskData((d) => ({ ...d, tasks: typeof updater === "function" ? updater(d.tasks) : updater }));
-  const toggleTask = (id) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
-  const deleteTask = (id) => { setTasks((prev) => prev.filter((t) => t.id !== id)); if (editingId === id) resetTaskForm(); };
-
-  const isDueUrgent = (d) => !!d && d <= todayISO();
-  const daysUntilDue = (d) => (d ? Math.round((new Date(d + "T00:00:00") - new Date(todayISO() + "T00:00:00")) / 86400000) : null);
-
-  const pendingTasks = tasks.filter((t) => !t.done);
-  const doneTasks = tasks.filter((t) => t.done);
-  const editingTask = editingId ? tasks.find((t) => t.id === editingId) : null;
-  const taskTags = Object.keys(taskTagColors);
-
-  const matchesDueFilter = (t) => {
-    if (dueFilter === "all") return true;
-    if (dueFilter === "overdue") return !!t.due && t.due < todayISO();
-    if (dueFilter === "soon") { if (!t.due) return false; const dd = daysUntilDue(t.due); return dd >= 0 && dd <= 7; }
-    if (dueFilter === "nodate") return !t.due;
-    return true;
+  const addTask = (topicId, fields) => {
+    setTaskData((d) => ({ ...d, tagColors: registerTags(d.tagColors, fields.tags), tasks: [{ id: Date.now(), topicId, ...fields, done: false }, ...d.tasks] }));
   };
-  const matchesTagFilter = (t) => !taskTagFilter || (t.tags || []).includes(taskTagFilter);
-  const filteredPending = pendingTasks.filter((t) => matchesDueFilter(t) && matchesTagFilter(t));
-  const filtersActive = dueFilter !== "all" || !!taskTagFilter;
-  const dragEnabled = !filtersActive && sortMode === "priority";
-
-  const byDueAsc = (a, b) => {
-    if (!a.due && !b.due) return 0;
-    if (!a.due) return 1;
-    if (!b.due) return -1;
-    return a.due.localeCompare(b.due);
+  const updateTask = (id, fields) => {
+    setTaskData((d) => ({ ...d, tagColors: registerTags(d.tagColors, fields.tags), tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...fields } : t)) }));
   };
-
-  let sortedFlat = filteredPending;
-  let tagGroups = null;
-  if (sortMode === "date") {
-    sortedFlat = [...filteredPending].sort(byDueAsc);
-  } else if (sortMode === "tag") {
-    const groups = {};
-    const noTag = [];
-    filteredPending.forEach((t) => {
-      const tag = (t.tags && t.tags[0]) || null;
-      if (!tag) { noTag.push(t); return; }
-      if (!groups[tag]) groups[tag] = [];
-      groups[tag].push(t);
+  const toggleTask = (id) => setTaskData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, done: !t.done } : t)) }));
+  const deleteTask = (id) => setTaskData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== id) }));
+  const reorderTasksForTopic = (topicId, newOrderIds) => {
+    setTaskData((d) => {
+      const byId = {}; d.tasks.forEach((t) => { byId[t.id] = t; });
+      let i = 0;
+      const newTasks = d.tasks.map((t) => (t.topicId === topicId ? byId[newOrderIds[i++]] : t));
+      return { ...d, tasks: newTasks };
     });
-    Object.keys(groups).forEach((tag) => groups[tag].sort(byDueAsc));
-    noTag.sort(byDueAsc);
-    tagGroups = Object.keys(groups).sort((a, b) => a.localeCompare(b)).map((tag) => ({ name: tag, color: taskTagColors[tag], items: groups[tag] }));
-    if (noTag.length) tagGroups.push({ name: "No tag", color: C.faint, items: noTag });
-  }
+  };
 
   const deleteTagGlobally = (tagName) => {
     setTaskData((d) => {
       const restColors = { ...d.tagColors };
       delete restColors[tagName];
-      const tasks = d.tasks.map((t) => ({ ...t, tags: (t.tags || []).filter((tg) => tg !== tagName) }));
-      return { ...d, tagColors: restColors, tasks };
+      const tasksNext = d.tasks.map((t) => ({ ...t, tags: (t.tags || []).filter((tg) => tg !== tagName) }));
+      return { ...d, tagColors: restColors, tasks: tasksNext };
     });
-    if (taskTagFilter === tagName) setTaskTagFilter(null);
   };
   const setTaskTagColor = (tagName, color) => {
     setTaskData((d) => ({ ...d, tagColors: { ...d.tagColors, [tagName]: color } }));
     setColorPickerTag(null);
   };
 
-  const weekCount = pendingTasks.filter((t) => t.due && daysUntilDue(t.due) >= 0 && daysUntilDue(t.due) <= 7).length;
-  const twoWeekCount = pendingTasks.filter((t) => t.due && daysUntilDue(t.due) > 7 && daysUntilDue(t.due) <= 14).length;
-  const monthDueCount = pendingTasks.filter((t) => t.due && daysUntilDue(t.due) > 14).length;
-  const noDateCount = pendingTasks.filter((t) => !t.due).length;
+  const confirmAddSection = () => { addSection(newSectionName); setNewSectionName(""); setAddingSection(false); };
+
+  const topicsWithTasks = topics.map((t) => ({ ...t, tasks: tasks.filter((x) => x.topicId === t.id) }));
+
+  // ---- Global stats (across all sections/topics) ----
+  const daysUntilDueG = (d) => (d ? Math.round((new Date(d + "T00:00:00") - new Date(todayISO() + "T00:00:00")) / 86400000) : null);
+  const pendingTasksG = tasks.filter((t) => !t.done);
+  const weekCount = pendingTasksG.filter((t) => t.due && daysUntilDueG(t.due) >= 0 && daysUntilDueG(t.due) <= 7).length;
+  const twoWeekCount = pendingTasksG.filter((t) => t.due && daysUntilDueG(t.due) > 7 && daysUntilDueG(t.due) <= 14).length;
+  const monthDueCount = pendingTasksG.filter((t) => t.due && daysUntilDueG(t.due) > 14).length;
+  const noDateCount = pendingTasksG.filter((t) => !t.due).length;
   const totalCount = tasks.length;
-
-  const onHandlePointerDown = (e, id, idx) => {
-    e.preventDefault();
-    const order = pendingTasks.map((t) => t.id);
-    const rects = order.map((tid) => {
-      const el = rowRefs.current[tid];
-      const r = el ? el.getBoundingClientRect() : { top: 0, height: 0 };
-      return { id: tid, mid: r.top + r.height / 2 };
-    });
-    dragInfo.current = { startY: e.clientY, order, rects, originalIndex: idx };
-    lastIndexRef.current = idx;
-    setDragId(id); setDragY(0);
-
-    const move = (ev) => {
-      const dy = ev.clientY - dragInfo.current.startY;
-      setDragY(dy);
-      const draggedMid = dragInfo.current.rects[dragInfo.current.originalIndex].mid + dy;
-      const others = dragInfo.current.rects.filter((_, i) => i !== dragInfo.current.originalIndex);
-      let newIndex = 0;
-      others.forEach((r) => { if (draggedMid > r.mid) newIndex++; });
-      if (newIndex !== lastIndexRef.current) {
-        lastIndexRef.current = newIndex;
-        const ids = [...dragInfo.current.order];
-        ids.splice(dragInfo.current.originalIndex, 1);
-        ids.splice(newIndex, 0, id);
-        setTasks((prev) => {
-          const doneOnes = prev.filter((t) => t.done);
-          const byId = {}; prev.forEach((t) => { byId[t.id] = t; });
-          const newPending = ids.map((tid) => byId[tid]);
-          return [...newPending, ...doneOnes];
-        });
-      }
-    };
-    const up = () => {
-      setDragId(null); setDragY(0);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-
-  const dueFilters = [
-    { id: "all", label: "All" },
-    { id: "overdue", label: "Overdue" },
-    { id: "soon", label: "Due soon" },
-    { id: "nodate", label: "No date" },
-  ];
-  const sortModes = [
-    { id: "priority", label: "Priority" },
-    { id: "date", label: "Date" },
-    { id: "tag", label: "Tags" },
-  ];
-
-  const renderTaskRow = (t, idx) => {
-    const isDragging = dragId === t.id;
-    return (
-      <div key={t.id} ref={(el) => { rowRefs.current[t.id] = el; }} style={{
-        display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 0", borderBottom: `1px solid ${C.border}`,
-        position: "relative", background: isDragging ? C.panel : "transparent",
-        transform: isDragging ? `translateY(${dragY}px)` : "none",
-        zIndex: isDragging ? 5 : 1, boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
-        borderRadius: isDragging ? 8 : 0,
-      }}>
-        {dragEnabled ? (
-          <div onPointerDown={(e) => onHandlePointerDown(e, t.id, idx)} style={{ color: C.faint, flexShrink: 0, marginTop: 4, cursor: "grab", touchAction: "none" }}>
-            <Icon name="grip" size={16} />
-          </div>
-        ) : (
-          <div style={{ width: 16, flexShrink: 0 }} />
-        )}
-        <button onClick={() => toggleTask(t.id)} style={{ marginTop: 2, width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: "none", border: `1px solid ${C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, color: C.text }}>{t.important && <span style={{ color: C.red, fontWeight: 700, marginRight: 4 }}>!</span>}{t.title}</div>
-          {t.details && <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{t.details}</div>}
-          {t.due && <div style={{ fontSize: 11, marginTop: 2, color: isDueUrgent(t.due) ? C.red : C.faint }}>Due {fmtDate(t.due)}</div>}
-          {t.tags && t.tags.length > 0 && (
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-              {t.tags.map((tag) => (
-                <span key={tag} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(tag, taskTagColors)}25`, color: tagColorFor(tag, taskTagColors) }}>{tag}</span>
-              ))}
-            </div>
-          )}
-        </div>
-        <button onClick={() => startEditTask(t)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
-        <button onClick={() => deleteTask(t.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
-      </div>
-    );
-  };
+  const taskTags = Object.keys(taskTagColors);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
       <PageTitle>Work</PageTitle>
-      <Card>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <SectionLabel>Tasks</SectionLabel>
-          <button onClick={() => (showTaskForm ? resetTaskForm() : (setEditingId(null), setShowTaskForm(true)))} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
-            <Icon name={showTaskForm ? "x" : "plus"} size={14} /> {showTaskForm ? "Cancel" : "Add"}
-          </button>
-        </div>
 
-        {showTaskForm && (
-          <TaskForm tagColors={taskTagColors} initial={editingTask} onCancel={resetTaskForm} onSubmit={saveTask} />
-        )}
-
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>Sort</span>
+      {addingSection ? (
+        <Card>
+          <SectionLabel>New section</SectionLabel>
           <div style={{ display: "flex", gap: 6 }}>
-            {sortModes.map((s) => (
-              <button key={s.id} onClick={() => setSortMode(s.id)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${sortMode === s.id ? C.gold : C.border}`, background: sortMode === s.id ? C.gold : "none", color: sortMode === s.id ? C.bg : C.muted }}>
-                {s.label}
-              </button>
-            ))}
+            <TextInput value={newSectionName} onChange={(e) => setNewSectionName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") confirmAddSection(); }} placeholder="e.g. Bots, Projects, General" style={{ flex: 1 }} />
+            <button onClick={confirmAddSection} style={{ background: C.gold, color: C.bg, borderRadius: 10, padding: "0 14px", border: "none" }}><Icon name="check" size={14} /></button>
+            <button onClick={() => { setAddingSection(false); setNewSectionName(""); }} style={{ color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 12px" }}><Icon name="x" size={14} /></button>
           </div>
-        </div>
+        </Card>
+      ) : (
+        <GoldButton onClick={() => setAddingSection(true)}>+ New Section</GoldButton>
+      )}
 
-        <div style={{ display: "flex", gap: 6, marginBottom: 8, overflowX: "auto", paddingBottom: 2 }}>
-          {dueFilters.map((f) => (
-            <button key={f.id} onClick={() => setDueFilter(f.id)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${dueFilter === f.id ? C.gold : C.border}`, background: dueFilter === f.id ? C.gold : "none", color: dueFilter === f.id ? C.bg : C.muted }}>
-              {f.label}
-            </button>
-          ))}
-        </div>
+      {sections.length === 0 && !addingSection && (
+        <Card><EmptyState text="No sections yet. Create one above to start organizing your tasks (e.g. Bots, Projects, General)." /></Card>
+      )}
 
-        {taskTags.length > 0 && (
-          <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 2 }}>
-            <button onClick={() => setTaskTagFilter(null)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${taskTagFilter === null ? C.gold : C.border}`, background: taskTagFilter === null ? C.gold : "none", color: taskTagFilter === null ? C.bg : C.muted }}>All tags</button>
-            {taskTags.map((tag) => (
-              <button key={tag} onClick={() => setTaskTagFilter(taskTagFilter === tag ? null : tag)} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${taskTagFilter === tag ? taskTagColors[tag] : C.border}`, background: taskTagFilter === tag ? taskTagColors[tag] : "none", color: taskTagFilter === tag ? C.bg : C.muted }}>
-                <div style={{ width: 6, height: 6, borderRadius: 999, background: taskTagFilter === tag ? C.bg : taskTagColors[tag] }} />
-                {tag}
-              </button>
-            ))}
-          </div>
-        )}
+      {sections.map((s) => (
+        <SectionBlock
+          key={s.id}
+          section={s}
+          topics={topicsWithTasks.filter((t) => t.sectionId === s.id)}
+          taskTagColors={taskTagColors}
+          onToggleOpen={() => toggleSectionOpen(s.id)}
+          onRename={(name) => renameSection(s.id, name)}
+          onDelete={() => deleteSection(s.id)}
+          onAddTopic={(name) => addTopic(s.id, name)}
+          onRenameTopic={renameTopic}
+          onDeleteTopic={deleteTopic}
+          onToggleTopicOpen={toggleTopicOpen}
+          onAddTask={addTask}
+          onUpdateTask={updateTask}
+          onDeleteTask={deleteTask}
+          onToggleTask={toggleTask}
+          onReorder={reorderTasksForTopic}
+        />
+      ))}
 
-        {(filtersActive || sortMode !== "priority") && (
-          <div style={{ fontSize: 11, color: C.faint, marginBottom: 8 }}>Clear filters and sort by Priority to drag-reorder tasks.</div>
-        )}
-
-        <div style={{ display: "flex", flexDirection: "column", maxHeight: 460, overflowY: dragId ? "hidden" : "auto" }}>
-          {filteredPending.length === 0 && <EmptyState text="No tasks match. Add one above." />}
-          {sortMode === "tag" && tagGroups
-            ? tagGroups.map((group) => (
-                <div key={group.name} style={{ marginBottom: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, marginTop: 4 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 999, background: group.color }} />
-                    <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>{group.name}</span>
-                  </div>
-                  {group.items.map((t, idx) => renderTaskRow(t, idx))}
-                </div>
-              ))
-            : sortedFlat.map((t, idx) => renderTaskRow(t, idx))}
-        </div>
-
-        <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
-          <button onClick={() => setCompletedOpen(!completedOpen)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
-            <span style={{ fontSize: 12, color: C.muted }}>Completed ({doneTasks.length})</span>
-            <Icon name={completedOpen ? "chevron-left" : "chevron-right"} size={13} color={C.muted} style={{ transform: completedOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
-          </button>
-          {completedOpen && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10, maxHeight: 240, overflowY: "auto" }}>
-              {doneTasks.length === 0 && <EmptyState text="No completed tasks." />}
-              {doneTasks.map((t) => (
-                <div key={t.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0" }}>
-                  <button onClick={() => toggleTask(t.id)} style={{ marginTop: 2, width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: C.gold, border: `1px solid ${C.gold}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <Icon name="check" size={13} color={C.bg} />
-                  </button>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, color: C.faint, textDecoration: "line-through" }}>{t.important && <span style={{ color: C.red, fontWeight: 700, marginRight: 4, textDecoration: "none", display: "inline-block" }}>!</span>}{t.title}</div>
-                    {t.tags && t.tags.length > 0 && (
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                        {t.tags.map((tag) => (
-                          <span key={tag} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(tag, taskTagColors)}25`, color: tagColorFor(tag, taskTagColors) }}>{tag}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <button onClick={() => deleteTask(t.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </Card>
       <Card>
         <SectionLabel>To Note</SectionLabel>
         <TextArea value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="Jot something down..." rows={3} />
@@ -506,6 +371,7 @@ function WorkPage() {
           ))}
         </div>
       </Card>
+
       <Card>
         <SectionLabel>Task Overview</SectionLabel>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
@@ -559,6 +425,364 @@ function WorkPage() {
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+function SectionBlock({ section, topics, taskTagColors, onToggleOpen, onRename, onDelete, onAddTopic, onRenameTopic, onDeleteTopic, onToggleTopicOpen, onAddTask, onUpdateTask, onDeleteTask, onToggleTask, onReorder }) {
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(section.name);
+  const [addingTopic, setAddingTopic] = useState(false);
+  const [newTopicName, setNewTopicName] = useState("");
+  const isOpen = section.open !== false;
+
+  const confirmRename = () => { if (nameInput.trim()) { onRename(nameInput); setEditingName(false); } };
+  const confirmAddTopic = () => { if (!newTopicName.trim()) return; onAddTopic(newTopicName); setNewTopicName(""); setAddingTopic(false); };
+  const totalPending = topics.reduce((sum, t) => sum + t.tasks.filter((x) => !x.done).length, 0);
+
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button onClick={onToggleOpen} style={{ background: "none", border: "none", color: C.muted, flexShrink: 0 }}>
+          <Icon name={isOpen ? "chevron-left" : "chevron-right"} size={15} style={{ transform: isOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+        </button>
+        {editingName ? (
+          <div style={{ flex: 1, display: "flex", gap: 6 }}>
+            <TextInput value={nameInput} onChange={(e) => setNameInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") confirmRename(); }} style={{ flex: 1, padding: "6px 10px" }} autoFocus />
+            <button onClick={confirmRename} style={{ color: C.gold, background: "none", border: "none" }}><Icon name="check" size={15} /></button>
+          </div>
+        ) : (
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: C.muted, fontWeight: 500 }}>{section.name}</div>
+            <div style={{ fontSize: 11, color: C.faint, marginTop: 2 }}>{totalPending} open task{totalPending === 1 ? "" : "s"} · {topics.length} topic{topics.length === 1 ? "" : "s"}</div>
+          </div>
+        )}
+        {!editingName && (
+          <>
+            <button onClick={() => { setNameInput(section.name); setEditingName(true); }} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
+            <button onClick={onDelete} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
+          </>
+        )}
+      </div>
+
+      {isOpen && (
+        <div style={{ marginTop: 14 }}>
+          {topics.length === 0 && <EmptyState text="No topics yet. Add one below." />}
+          {topics.map((top) => (
+            <TopicBlock
+              key={top.id}
+              topic={top}
+              tasks={top.tasks}
+              taskTagColors={taskTagColors}
+              onAddTask={(fields) => onAddTask(top.id, fields)}
+              onUpdateTask={onUpdateTask}
+              onDeleteTask={onDeleteTask}
+              onToggleTask={onToggleTask}
+              onReorder={(ids) => onReorder(top.id, ids)}
+              onRename={(name) => onRenameTopic(top.id, name)}
+              onDelete={() => onDeleteTopic(top.id)}
+              onToggleOpen={() => onToggleTopicOpen(top.id)}
+            />
+          ))}
+
+          {addingTopic ? (
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <TextInput value={newTopicName} onChange={(e) => setNewTopicName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") confirmAddTopic(); }} placeholder="Topic name" style={{ flex: 1 }} autoFocus />
+              <button onClick={confirmAddTopic} style={{ background: C.gold, color: C.bg, borderRadius: 10, padding: "0 14px", border: "none" }}><Icon name="check" size={14} /></button>
+              <button onClick={() => { setAddingTopic(false); setNewTopicName(""); }} style={{ color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 12px" }}><Icon name="x" size={14} /></button>
+            </div>
+          ) : (
+            <button onClick={() => setAddingTopic(true)} style={{ marginTop: 8, color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+              <Icon name="plus" size={13} /> Add topic
+            </button>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function TopicBlock({ topic, tasks, taskTagColors, onAddTask, onUpdateTask, onDeleteTask, onToggleTask, onReorder, onRename, onDelete, onToggleOpen }) {
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [dueFilter, setDueFilter] = useState("all");
+  const [taskTagFilter, setTaskTagFilter] = useState(null);
+  const [sortMode, setSortMode] = useState("priority");
+  const [completedOpen, setCompletedOpen] = useState(false);
+  const [dragId, setDragId] = useState(null);
+  const [dragY, setDragY] = useState(0);
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(topic.name);
+  const dragInfo = useRef({});
+  const lastIndexRef = useRef(0);
+  const rowRefs = useRef({});
+
+  const isOpen = topic.open !== false;
+
+  const resetTaskForm = () => { setEditingId(null); setShowTaskForm(false); };
+  const startEditTask = (t) => { setEditingId(t.id); setShowTaskForm(true); };
+  const editingTask = editingId ? tasks.find((t) => t.id === editingId) : null;
+
+  const submitTask = (fields) => {
+    if (editingId) onUpdateTask(editingId, fields);
+    else onAddTask(fields);
+    resetTaskForm();
+  };
+
+  const confirmRename = () => { if (nameInput.trim()) { onRename(nameInput); setEditingName(false); } };
+
+  const isDueUrgent = (d) => !!d && d <= todayISO();
+  const daysUntilDue = (d) => (d ? Math.round((new Date(d + "T00:00:00") - new Date(todayISO() + "T00:00:00")) / 86400000) : null);
+
+  const pendingTasks = tasks.filter((t) => !t.done);
+  const doneTasks = tasks.filter((t) => t.done);
+  const taskTags = Object.keys(taskTagColors);
+
+  const matchesDueFilter = (t) => {
+    if (dueFilter === "all") return true;
+    if (dueFilter === "overdue") return !!t.due && t.due < todayISO();
+    if (dueFilter === "soon") { if (!t.due) return false; const dd = daysUntilDue(t.due); return dd >= 0 && dd <= 7; }
+    if (dueFilter === "nodate") return !t.due;
+    return true;
+  };
+  const matchesTagFilter = (t) => !taskTagFilter || (t.tags || []).includes(taskTagFilter);
+  const filteredPending = pendingTasks.filter((t) => matchesDueFilter(t) && matchesTagFilter(t));
+  const filtersActive = dueFilter !== "all" || !!taskTagFilter;
+  const dragEnabled = !filtersActive && sortMode === "priority";
+
+  const byDueAsc = (a, b) => {
+    if (!a.due && !b.due) return 0;
+    if (!a.due) return 1;
+    if (!b.due) return -1;
+    return a.due.localeCompare(b.due);
+  };
+
+  let sortedFlat = filteredPending;
+  let tagGroups = null;
+  if (sortMode === "date") {
+    sortedFlat = [...filteredPending].sort(byDueAsc);
+  } else if (sortMode === "tag") {
+    const groups = {};
+    const noTag = [];
+    filteredPending.forEach((t) => {
+      const tag = (t.tags && t.tags[0]) || null;
+      if (!tag) { noTag.push(t); return; }
+      if (!groups[tag]) groups[tag] = [];
+      groups[tag].push(t);
+    });
+    Object.keys(groups).forEach((tag) => groups[tag].sort(byDueAsc));
+    noTag.sort(byDueAsc);
+    tagGroups = Object.keys(groups).sort((a, b) => a.localeCompare(b)).map((tag) => ({ name: tag, color: taskTagColors[tag], items: groups[tag] }));
+    if (noTag.length) tagGroups.push({ name: "No tag", color: C.faint, items: noTag });
+  }
+
+  const onHandlePointerDown = (e, id, idx) => {
+    e.preventDefault();
+    const order = pendingTasks.map((t) => t.id);
+    const rects = order.map((tid) => {
+      const el = rowRefs.current[tid];
+      const r = el ? el.getBoundingClientRect() : { top: 0, height: 0 };
+      return { id: tid, mid: r.top + r.height / 2 };
+    });
+    dragInfo.current = { startY: e.clientY, order, rects, originalIndex: idx };
+    lastIndexRef.current = idx;
+    setDragId(id); setDragY(0);
+
+    const move = (ev) => {
+      const dy = ev.clientY - dragInfo.current.startY;
+      setDragY(dy);
+      const draggedMid = dragInfo.current.rects[dragInfo.current.originalIndex].mid + dy;
+      const others = dragInfo.current.rects.filter((_, i) => i !== dragInfo.current.originalIndex);
+      let newIndex = 0;
+      others.forEach((r) => { if (draggedMid > r.mid) newIndex++; });
+      if (newIndex !== lastIndexRef.current) {
+        lastIndexRef.current = newIndex;
+        const ids = [...dragInfo.current.order];
+        ids.splice(dragInfo.current.originalIndex, 1);
+        ids.splice(newIndex, 0, id);
+        onReorder(ids);
+      }
+    };
+    const up = () => {
+      setDragId(null); setDragY(0);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const dueFilters = [
+    { id: "all", label: "All" },
+    { id: "overdue", label: "Overdue" },
+    { id: "soon", label: "Due soon" },
+    { id: "nodate", label: "No date" },
+  ];
+  const sortModes = [
+    { id: "priority", label: "Priority" },
+    { id: "date", label: "Date" },
+    { id: "tag", label: "Tags" },
+  ];
+
+  const renderTaskRow = (t, idx) => {
+    const isDragging = dragId === t.id;
+    return (
+      <div key={t.id} ref={(el) => { rowRefs.current[t.id] = el; }} style={{
+        display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 0", borderBottom: `1px solid ${C.border}`,
+        position: "relative", background: isDragging ? C.panel : "transparent",
+        transform: isDragging ? `translateY(${dragY}px)` : "none",
+        zIndex: isDragging ? 5 : 1, boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
+        borderRadius: isDragging ? 8 : 0,
+      }}>
+        {dragEnabled ? (
+          <div onPointerDown={(e) => onHandlePointerDown(e, t.id, idx)} style={{ color: C.faint, flexShrink: 0, marginTop: 4, cursor: "grab", touchAction: "none" }}>
+            <Icon name="grip" size={16} />
+          </div>
+        ) : (
+          <div style={{ width: 16, flexShrink: 0 }} />
+        )}
+        <button onClick={() => onToggleTask(t.id)} style={{ marginTop: 2, width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: "none", border: `1px solid ${C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, color: C.text }}>{t.important && <span style={{ color: C.red, fontWeight: 700, marginRight: 4 }}>!</span>}{t.title}</div>
+          {t.details && <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{t.details}</div>}
+          {t.due && <div style={{ fontSize: 11, marginTop: 2, color: isDueUrgent(t.due) ? C.red : C.faint }}>Due {fmtDate(t.due)}</div>}
+          {t.tags && t.tags.length > 0 && (
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+              {t.tags.map((tag) => (
+                <span key={tag} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(tag, taskTagColors)}25`, color: tagColorFor(tag, taskTagColors) }}>{tag}</span>
+              ))}
+            </div>
+          )}
+        </div>
+        <button onClick={() => startEditTask(t)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={13} /></button>
+        <button onClick={() => onDeleteTask(t.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ marginBottom: 16, paddingLeft: 10, borderLeft: `2px solid ${C.border}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <button onClick={onToggleOpen} style={{ background: "none", border: "none", color: C.muted, flexShrink: 0 }}>
+          <Icon name={isOpen ? "chevron-left" : "chevron-right"} size={13} style={{ transform: isOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+        </button>
+        {editingName ? (
+          <div style={{ flex: 1, display: "flex", gap: 6 }}>
+            <TextInput value={nameInput} onChange={(e) => setNameInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") confirmRename(); }} style={{ flex: 1, padding: "5px 10px", fontSize: 13 }} autoFocus />
+            <button onClick={confirmRename} style={{ color: C.gold, background: "none", border: "none" }}><Icon name="check" size={14} /></button>
+          </div>
+        ) : (
+          <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: C.text }}>
+            {topic.name} <span style={{ fontSize: 11, color: C.faint, fontWeight: 400 }}>({pendingTasks.length})</span>
+          </div>
+        )}
+        {!editingName && (
+          <>
+            <button onClick={() => { setNameInput(topic.name); setEditingName(true); }} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="pencil" size={12} /></button>
+            <button onClick={onDelete} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={12} /></button>
+          </>
+        )}
+      </div>
+
+      {isOpen && (
+        <div style={{ marginTop: 8, paddingLeft: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <button onClick={() => (showTaskForm ? resetTaskForm() : (setEditingId(null), setShowTaskForm(true)))} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+              <Icon name={showTaskForm ? "x" : "plus"} size={13} /> {showTaskForm ? "Cancel" : "Add task"}
+            </button>
+          </div>
+
+          {showTaskForm && (
+            <TaskForm tagColors={taskTagColors} initial={editingTask} onCancel={resetTaskForm} onSubmit={submitTask} />
+          )}
+
+          {tasks.length > 0 && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>Sort</span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {sortModes.map((s) => (
+                    <button key={s.id} onClick={() => setSortMode(s.id)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${sortMode === s.id ? C.gold : C.border}`, background: sortMode === s.id ? C.gold : "none", color: sortMode === s.id ? C.bg : C.muted }}>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 6, marginBottom: 8, overflowX: "auto", paddingBottom: 2 }}>
+                {dueFilters.map((f) => (
+                  <button key={f.id} onClick={() => setDueFilter(f.id)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${dueFilter === f.id ? C.gold : C.border}`, background: dueFilter === f.id ? C.gold : "none", color: dueFilter === f.id ? C.bg : C.muted }}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              {taskTags.length > 0 && (
+                <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 2 }}>
+                  <button onClick={() => setTaskTagFilter(null)} style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${taskTagFilter === null ? C.gold : C.border}`, background: taskTagFilter === null ? C.gold : "none", color: taskTagFilter === null ? C.bg : C.muted }}>All tags</button>
+                  {taskTags.map((tag) => (
+                    <button key={tag} onClick={() => setTaskTagFilter(taskTagFilter === tag ? null : tag)} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5, fontSize: 11, padding: "5px 12px", borderRadius: 999, border: `1px solid ${taskTagFilter === tag ? taskTagColors[tag] : C.border}`, background: taskTagFilter === tag ? taskTagColors[tag] : "none", color: taskTagFilter === tag ? C.bg : C.muted }}>
+                      <div style={{ width: 6, height: 6, borderRadius: 999, background: taskTagFilter === tag ? C.bg : taskTagColors[tag] }} />
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {(filtersActive || sortMode !== "priority") && (
+                <div style={{ fontSize: 11, color: C.faint, marginBottom: 8 }}>Clear filters and sort by Priority to drag-reorder tasks.</div>
+              )}
+            </>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {tasks.length === 0 && <EmptyState text="No tasks yet. Add one above." />}
+            {tasks.length > 0 && filteredPending.length === 0 && <EmptyState text="No tasks match these filters." />}
+            {sortMode === "tag" && tagGroups
+              ? tagGroups.map((group) => (
+                  <div key={group.name} style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, marginTop: 4 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: 999, background: group.color }} />
+                      <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>{group.name}</span>
+                    </div>
+                    {group.items.map((t, idx) => renderTaskRow(t, idx))}
+                  </div>
+                ))
+              : sortedFlat.map((t, idx) => renderTaskRow(t, idx))}
+          </div>
+
+          {doneTasks.length > 0 && (
+            <div style={{ marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
+              <button onClick={() => setCompletedOpen(!completedOpen)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none" }}>
+                <span style={{ fontSize: 12, color: C.muted }}>Completed ({doneTasks.length})</span>
+                <Icon name={completedOpen ? "chevron-left" : "chevron-right"} size={13} color={C.muted} style={{ transform: completedOpen ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+              </button>
+              {completedOpen && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10, maxHeight: 240, overflowY: "auto" }}>
+                  {doneTasks.map((t) => (
+                    <div key={t.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0" }}>
+                      <button onClick={() => onToggleTask(t.id)} style={{ marginTop: 2, width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: C.gold, border: `1px solid ${C.gold}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Icon name="check" size={13} color={C.bg} />
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, color: C.faint, textDecoration: "line-through" }}>{t.important && <span style={{ color: C.red, fontWeight: 700, marginRight: 4, textDecoration: "none", display: "inline-block" }}>!</span>}{t.title}</div>
+                        {t.tags && t.tags.length > 0 && (
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                            {t.tags.map((tag) => (
+                              <span key={tag} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: `${tagColorFor(tag, taskTagColors)}25`, color: tagColorFor(tag, taskTagColors) }}>{tag}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={() => onDeleteTask(t.id)} style={{ color: C.faint, background: "none", border: "none", flexShrink: 0 }}><Icon name="trash" size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -638,6 +862,7 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
     </div>
   );
 }
+
 
 
 // ============ HEALTH ============
@@ -3538,6 +3763,207 @@ function ItemForm({ tagColors, initial, onCancel, onSubmit }) {
   );
 }
 
+// ============ PROJECT 50 ============
+const PROJECT50_DEFAULT_RULES = [
+  "Wake up before 8am",
+  "One hour undistracted morning routine (no phone/social media)",
+  "Exercise for one hour",
+  "Dedicate one hour to learning a new skill",
+  "Read 10 pages of a book",
+  "Follow a healthy diet \u2014 no alcohol, soft drinks, or added sugar",
+  "Track and journal your progress",
+];
+
+function Project50Page() {
+  const [data, setData] = useState(() => {
+    const d = load("project50-data", { startDate: todayISO(), rules: PROJECT50_DEFAULT_RULES, checks: {} });
+    return { startDate: d.startDate, rules: d.rules && d.rules.length ? d.rules : PROJECT50_DEFAULT_RULES, checks: d.checks || {} };
+  });
+  useEffect(() => { save("project50-data", data); }, [data]);
+
+  const [editingRules, setEditingRules] = useState(false);
+  const [ruleDrafts, setRuleDrafts] = useState(data.rules);
+  const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+  const [showStartEdit, setShowStartEdit] = useState(false);
+  const [startInput, setStartInput] = useState(data.startDate);
+  const [dismissedMiss, setDismissedMiss] = useState(false);
+
+  const today = todayISO();
+  const dayDate = (i) => localISO(addDays(new Date(data.startDate + "T00:00:00"), i));
+  const todayIndex = Array.from({ length: 50 }, (_, i) => i).findIndex((i) => dayDate(i) === today);
+  const [viewIndex, setViewIndex] = useState(todayIndex >= 0 ? todayIndex : 0);
+
+  const dayChecks = (i) => data.checks[i] || Array(data.rules.length).fill(false);
+  const isDayComplete = (i) => {
+    const c = data.checks[i];
+    return !!c && c.length === data.rules.length && c.every(Boolean);
+  };
+  const toggleCheck = (i, ruleIdx) => setData((d) => {
+    const current = d.checks[i] && d.checks[i].length === d.rules.length ? d.checks[i] : Array(d.rules.length).fill(false);
+    const next = [...current];
+    next[ruleIdx] = !next[ruleIdx];
+    return { ...d, checks: { ...d.checks, [i]: next } };
+  });
+
+  const saveRules = () => { setData((d) => ({ ...d, rules: ruleDrafts.filter((r) => r.trim()) })); setEditingRules(false); };
+  const saveStart = () => { setData((d) => ({ ...d, startDate: startInput })); setShowStartEdit(false); };
+  const restart = () => {
+    setData((d) => ({ ...d, startDate: todayISO(), checks: {} }));
+    setShowRestartConfirm(false);
+    setDismissedMiss(false);
+  };
+
+  const completedCount = Array.from({ length: 50 }, (_, i) => i).filter(isDayComplete).length;
+  let streak = 0;
+  for (let i = 0; i < 50; i++) { if (isDayComplete(i)) streak++; else break; }
+
+  const firstMissedIndex = todayIndex > 0
+    ? Array.from({ length: todayIndex }, (_, i) => i).find((i) => !isDayComplete(i))
+    : undefined;
+  const showMissBanner = firstMissedIndex !== undefined && !dismissedMiss;
+
+  const viewedChecks = dayChecks(viewIndex);
+  const viewedComplete = isDayComplete(viewIndex);
+  const viewedIsToday = viewIndex === todayIndex;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
+      <PageTitle>Project 50</PageTitle>
+
+      {showMissBanner && (
+        <Card style={{ border: `1px solid ${C.red}` }}>
+          <div style={{ fontSize: 13, color: C.textDim, lineHeight: 1.5, marginBottom: 10 }}>
+            Day {firstMissedIndex + 1} ({fmtDate(dayDate(firstMissedIndex))}) wasn't fully checked off \u2014 restart from Day 1?
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={restart} style={{ fontSize: 12, color: "#fff", background: C.red, border: "none", borderRadius: 999, padding: "8px 16px", fontWeight: 600 }}>Restart</button>
+            <button onClick={() => setDismissedMiss(true)} style={{ fontSize: 12, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 999, padding: "8px 16px" }}>Not now</button>
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <SectionLabel>The Rules</SectionLabel>
+          <button onClick={() => { setRuleDrafts(data.rules); setEditingRules(!editingRules); }} style={{ color: C.gold, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, background: "none", border: "none" }}>
+            <Icon name={editingRules ? "x" : "pencil"} size={13} /> {editingRules ? "Cancel" : "Edit"}
+          </button>
+        </div>
+        {editingRules && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {ruleDrafts.map((r, i) => (
+              <TextInput key={i} value={r} onChange={(e) => { const next = [...ruleDrafts]; next[i] = e.target.value; setRuleDrafts(next); }} placeholder={`Rule ${i + 1}`} />
+            ))}
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button onClick={() => setRuleDrafts([...ruleDrafts, ""])} style={{ fontSize: 12, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 14px" }}>+ Add rule</button>
+              <GoldButton onClick={saveRules}>Save</GoldButton>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <SectionLabel>Day {viewIndex + 1} Checklist{!viewedIsToday ? ` · ${fmtDate(dayDate(viewIndex))}` : ""}</SectionLabel>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+          <button onClick={() => setViewIndex(Math.max(0, viewIndex - 1))} style={iconBtnStyle}><Icon name="chevron-left" size={18} /></button>
+          <div style={{ flex: 1, textAlign: "center", fontSize: 12, color: C.muted }}>{viewedIsToday ? "Today" : fmtDate(dayDate(viewIndex))}</div>
+          <button onClick={() => setViewIndex(Math.min(49, viewIndex + 1))} style={iconBtnStyle}><Icon name="chevron-right" size={18} /></button>
+          {!viewedIsToday && todayIndex >= 0 && <button onClick={() => setViewIndex(todayIndex)} style={{ fontSize: 12, color: C.gold, background: "none", border: `1px solid ${C.border}`, borderRadius: 999, padding: "8px 14px", whiteSpace: "nowrap" }}>Today</button>}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {data.rules.map((r, ri) => {
+            const checked = !!viewedChecks[ri];
+            return (
+              <button key={ri} onClick={() => toggleCheck(viewIndex, ri)} style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "none", border: "none", textAlign: "left" }}>
+                <div style={{ marginTop: 2, width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: checked ? C.green : "none", border: `1px solid ${checked ? C.green : C.faint}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {checked && <Icon name="check" size={12} color={C.bg} />}
+                </div>
+                <span style={{ fontSize: 13, color: checked ? C.faint : C.textDim, textDecoration: checked ? "line-through" : "none", lineHeight: 1.5 }}>{r}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {viewedComplete && (
+          <div style={{ marginTop: 14, fontSize: 12, color: C.green, textAlign: "center", fontWeight: 500 }}>
+            Day {viewIndex + 1} complete \u2014 nice work.
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <SectionLabel>Progress</SectionLabel>
+        <div style={{ display: "flex", gap: 10, marginTop: 12, marginBottom: 14 }}>
+          <div style={{ flex: 1, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Days Done</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, color: C.gold, marginTop: 4 }}>{completedCount}/50</div>
+          </div>
+          <div style={{ flex: 1, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Current Streak</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, marginTop: 4 }}>
+              {streak > 0 && <Icon name="flame" size={15} color={C.gold} />}
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, color: C.gold }}>{streak}</span>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: C.muted }}>Start date</span>
+          {showStartEdit ? (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <DateField value={startInput} onChange={setStartInput} />
+              <button onClick={saveStart} style={{ color: C.gold, background: "none", border: "none" }}><Icon name="check" size={14} /></button>
+            </div>
+          ) : (
+            <button onClick={() => { setStartInput(data.startDate); setShowStartEdit(true); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.textDim, fontSize: 13 }}>
+              {fmtDate(data.startDate)} <Icon name="pencil" size={11} color={C.faint} />
+            </button>
+          )}
+        </div>
+        <div style={{ marginTop: 14 }}>
+          {showRestartConfirm ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 11, color: C.red, flex: 1 }}>Clear all progress and restart from Day 1?</span>
+              <button onClick={restart} style={{ fontSize: 11, color: "#fff", background: C.red, border: "none", borderRadius: 999, padding: "5px 12px", fontWeight: 600 }}>Restart</button>
+              <button onClick={() => setShowRestartConfirm(false)} style={{ fontSize: 11, color: C.muted, background: "none", border: `1px solid ${C.border}`, borderRadius: 999, padding: "5px 12px" }}>Cancel</button>
+            </div>
+          ) : (
+            <button onClick={() => setShowRestartConfirm(true)} style={{ fontSize: 11, color: C.faint, background: "none", border: "none" }}>Restart from Day 1</button>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <SectionLabel>50-Day Tracker</SectionLabel>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginTop: 12 }}>
+          {Array.from({ length: 50 }, (_, i) => i).map((i) => {
+            const done = isDayComplete(i);
+            const isToday = i === todayIndex;
+            const isViewed = i === viewIndex;
+            return (
+              <button
+                key={i}
+                onClick={() => setViewIndex(i)}
+                style={{
+                  aspectRatio: "1", borderRadius: 10, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                  background: done ? C.gold : "none",
+                  border: `1px solid ${done ? C.gold : isViewed ? C.text : isToday ? C.gold : C.border}`,
+                  color: done ? C.bg : isToday ? C.gold : C.muted, fontWeight: isToday || isViewed ? 700 : 400,
+                }}
+              >
+                <span style={{ fontSize: 13 }}>{i + 1}</span>
+                {done && <Icon name="check" size={11} color={C.bg} />}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // ============ TRADING ============
 function TradingPage() {
   const [data, setData] = useState(() => {
@@ -4036,6 +4462,85 @@ function TradingViewWidget({ src, config, height = 400 }) {
   return <div ref={container} style={{ width: "100%", height }} />;
 }
 
+const FOREX_SESSIONS = [
+  { id: "sydney", label: "Sydney", color: "#9B8AC4", utcStart: 22, utcEnd: 7 },
+  { id: "tokyo", label: "Tokyo", color: "#D98CB3", utcStart: 0, utcEnd: 9 },
+  { id: "london", label: "London", color: "#6FA8C9", utcStart: 8, utcEnd: 17 },
+  { id: "newyork", label: "New York", color: "#7FB069", utcStart: 13, utcEnd: 22 },
+];
+
+function sessionActiveAtUtc(s, utcHour) {
+  if (s.utcEnd > s.utcStart) return utcHour >= s.utcStart && utcHour < s.utcEnd;
+  return utcHour >= s.utcStart || utcHour < s.utcEnd;
+}
+
+function sessionLocalIntervals(s, offsetHours) {
+  const utcPieces = s.utcEnd > s.utcStart ? [[s.utcStart, s.utcEnd]] : [[s.utcStart, 24], [0, s.utcEnd]];
+  const out = [];
+  utcPieces.forEach(([a, b]) => {
+    let la = ((a + offsetHours) % 24 + 24) % 24;
+    let lb = ((b + offsetHours) % 24 + 24) % 24;
+    if (lb === 0) lb = 24;
+    if (la < lb) out.push([la, lb]);
+    else if (la > lb) { out.push([la, 24]); out.push([0, lb]); }
+  });
+  return out;
+}
+
+function SessionTimeline() {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
+
+  const offsetHours = -now.getTimezoneOffset() / 60;
+  const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
+  const localHour = now.getHours() + now.getMinutes() / 60;
+  const utcDay = now.getUTCDay();
+  const marketClosed = utcDay === 6 || (utcDay === 0 && utcHour < 22) || (utcDay === 5 && utcHour >= 22);
+
+  const activeSessions = FOREX_SESSIONS.filter((s) => sessionActiveAtUtc(s, utcHour));
+  const tzLabel = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  return (
+    <Card>
+      <SectionLabel>Trading Sessions</SectionLabel>
+      <div style={{ textAlign: "center", margin: "12px 0 16px" }}>
+        {marketClosed ? (
+          <div style={{ fontSize: 15, color: C.faint, fontWeight: 500 }}>Market closed \u2014 weekend</div>
+        ) : (
+          <div style={{ fontSize: 15, color: C.gold, fontWeight: 600 }}>
+            {activeSessions.map((s) => s.label).join(" + ")} {activeSessions.length > 1 ? "(overlap)" : "session"}
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: C.faint, marginTop: 4 }}>Your time ({tzLabel}): {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {FOREX_SESSIONS.map((s) => {
+          const intervals = sessionLocalIntervals(s, offsetHours);
+          const isActive = activeSessions.some((a) => a.id === s.id);
+          return (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 62, flexShrink: 0, fontSize: 11, color: isActive ? s.color : C.muted, fontWeight: isActive ? 600 : 400 }}>{s.label}</div>
+              <div style={{ position: "relative", flex: 1, height: 18, background: C.bg, borderRadius: 6, overflow: "hidden" }}>
+                {intervals.map(([a, b], i) => (
+                  <div key={i} style={{ position: "absolute", left: `${(a / 24) * 100}%`, width: `${((b - a) / 24) * 100}%`, top: 0, bottom: 0, background: s.color, opacity: isActive ? 0.9 : 0.35 }} />
+                ))}
+                <div style={{ position: "absolute", left: `${(localHour / 24) * 100}%`, top: -2, bottom: -2, width: 2, background: C.text }} />
+              </div>
+            </div>
+          );
+        })}
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: C.faint, paddingLeft: 72 }}>
+          <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span>
+        </div>
+      </div>
+      <div style={{ fontSize: 10, color: C.faint, marginTop: 14, lineHeight: 1.5 }}>
+        Session hours use standard fixed UTC windows (Sydney 22\u201307, Tokyo 00\u201309, London 08\u201317, New York 13\u201322 UTC) \u2014 the common simplification most session clocks use, not adjusted for each city's own daylight saving.
+      </div>
+    </Card>
+  );
+}
+
 function TrendPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 90 }}>
@@ -4077,6 +4582,8 @@ function TrendPage() {
         />
       </Card>
 
+      <SessionTimeline />
+
       <Card style={{ padding: 8 }}>
         <SectionLabel>Chart Pattern Cheat Sheet</SectionLabel>
         <img
@@ -4095,7 +4602,7 @@ const CHEATSHEET_IMG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
 // ============ BACKUP (real file download) ============
 function downloadBackup() {
-  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data", "inventory-data"];
+  const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data", "inventory-data", "project50-data"];
   const out = {};
   keys.forEach((k) => { out[k] = load(k, null); });
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
@@ -4116,7 +4623,7 @@ function RestoreModal({ onClose }) {
     setStatus("working");
     try {
       const parsed = JSON.parse(jsonText);
-      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data", "inventory-data"];
+      const keys = ["journal-data", "tasks-data", "health-data", "habits-data", "trading-data", "countdown-data", "settings-data", "fasting-data", "kitchen-data", "recipes-data", "exercise-data", "meal-schedule-data", "fitness-tracking-data", "inventory-data", "project50-data"];
       keys.forEach((k) => { if (parsed[k] !== undefined && parsed[k] !== null) save(k, parsed[k]); });
       setStatus("done");
       setTimeout(() => window.location.reload(), 900);
@@ -4244,6 +4751,7 @@ const TAB_DEFS = [
   { id: "kitchen", label: "Kitchen", icon: "cart" },
   { id: "recipes", label: "Recipes", icon: "book" },
   { id: "inventory", label: "Inventory", icon: "package" },
+  { id: "project50", label: "Project 50", icon: "target" },
   { id: "trading", label: "Trading", icon: "trending-up" },
   { id: "countdown", label: "Countdown", icon: "calendar" },
 ];
@@ -4338,6 +4846,7 @@ function App() {
             {tab === "kitchen" && <KitchenPage onNavigate={setTab} />}
             {tab === "recipes" && <RecipesPage />}
             {tab === "inventory" && <InventoryPage />}
+            {tab === "project50" && <Project50Page />}
             {tab === "trading" && <TradingPage />}
             {tab === "trend" && <TrendPage />}
             {tab === "countdown" && <CountdownPage />}
