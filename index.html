@@ -339,6 +339,8 @@ function WorkPage() {
           section={s}
           topics={topicsWithTasks.filter((t) => t.sectionId === s.id)}
           taskTagColors={taskTagColors}
+          allSections={sections}
+          allTopics={topics}
           onToggleOpen={() => toggleSectionOpen(s.id)}
           onRename={(name) => renameSection(s.id, name)}
           onDelete={() => deleteSection(s.id)}
@@ -429,7 +431,7 @@ function WorkPage() {
   );
 }
 
-function SectionBlock({ section, topics, taskTagColors, onToggleOpen, onRename, onDelete, onAddTopic, onRenameTopic, onDeleteTopic, onToggleTopicOpen, onAddTask, onUpdateTask, onDeleteTask, onToggleTask, onReorder }) {
+function SectionBlock({ section, topics, taskTagColors, allSections, allTopics, onToggleOpen, onRename, onDelete, onAddTopic, onRenameTopic, onDeleteTopic, onToggleTopicOpen, onAddTask, onUpdateTask, onDeleteTask, onToggleTask, onReorder }) {
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(section.name);
   const [addingTopic, setAddingTopic] = useState(false);
@@ -474,6 +476,8 @@ function SectionBlock({ section, topics, taskTagColors, onToggleOpen, onRename, 
               topic={top}
               tasks={top.tasks}
               taskTagColors={taskTagColors}
+              allSections={allSections}
+              allTopics={allTopics}
               onAddTask={(fields) => onAddTask(top.id, fields)}
               onUpdateTask={onUpdateTask}
               onDeleteTask={onDeleteTask}
@@ -502,7 +506,7 @@ function SectionBlock({ section, topics, taskTagColors, onToggleOpen, onRename, 
   );
 }
 
-function TopicBlock({ topic, tasks, taskTagColors, onAddTask, onUpdateTask, onDeleteTask, onToggleTask, onReorder, onRename, onDelete, onToggleOpen }) {
+function TopicBlock({ topic, tasks, taskTagColors, allSections, allTopics, onAddTask, onUpdateTask, onDeleteTask, onToggleTask, onReorder, onRename, onDelete, onToggleOpen }) {
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [dueFilter, setDueFilter] = useState("all");
@@ -631,7 +635,7 @@ function TopicBlock({ topic, tasks, taskTagColors, onAddTask, onUpdateTask, onDe
         display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 0", borderBottom: `1px solid ${C.border}`,
         position: "relative", background: isDragging ? C.panel : "transparent",
         transform: isDragging ? `translateY(${dragY}px)` : "none",
-        zIndex: isDragging ? 5 : 1, boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
+        zIndex: isDragging ? 5 : "auto", boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
         borderRadius: isDragging ? 8 : 0,
       }}>
         {dragEnabled ? (
@@ -693,7 +697,7 @@ function TopicBlock({ topic, tasks, taskTagColors, onAddTask, onUpdateTask, onDe
           </div>
 
           {showTaskForm && (
-            <TaskForm tagColors={taskTagColors} initial={editingTask} onCancel={resetTaskForm} onSubmit={submitTask} />
+            <TaskForm tagColors={taskTagColors} initial={editingTask} onCancel={resetTaskForm} onSubmit={submitTask} sections={allSections} topics={allTopics} currentTopicId={topic.id} />
           )}
 
           {tasks.length > 0 && (
@@ -787,7 +791,7 @@ function TopicBlock({ topic, tasks, taskTagColors, onAddTask, onUpdateTask, onDe
   );
 }
 
-function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
+function TaskForm({ tagColors, initial, onCancel, onSubmit, sections, topics, currentTopicId }) {
   const [title, setTitle] = useState(initial && initial.title ? initial.title : "");
   const [details, setDetails] = useState(initial && initial.details ? initial.details : "");
   const [due, setDue] = useState(initial && initial.due ? initial.due : "");
@@ -796,6 +800,24 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
   const [newTagText, setNewTagText] = useState("");
   const [addingTag, setAddingTag] = useState(false);
   const [titleError, setTitleError] = useState(false);
+
+  const safeSections = sections || [];
+  const safeTopics = topics || [];
+  const [selectedSectionId, setSelectedSectionId] = useState(() => {
+    const startTopicId = (initial && initial.topicId) || currentTopicId;
+    const t = safeTopics.find((tp) => tp.id === startTopicId);
+    return t ? t.sectionId : (safeSections[0] ? safeSections[0].id : null);
+  });
+  const [selectedTopicId, setSelectedTopicId] = useState((initial && initial.topicId) || currentTopicId || null);
+  const topicsInSection = safeTopics.filter((t) => t.sectionId === selectedSectionId);
+  const chooseSection = (sid) => {
+    setSelectedSectionId(sid);
+    const stillValid = safeTopics.some((t) => t.sectionId === sid && t.id === selectedTopicId);
+    if (!stillValid) {
+      const first = safeTopics.find((t) => t.sectionId === sid);
+      setSelectedTopicId(first ? first.id : null);
+    }
+  };
 
   const toggleTag = (t) => setTags(tags.includes(t) ? tags.filter((x) => x !== t) : [...tags, t]);
   const confirmNewTag = () => {
@@ -810,7 +832,9 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
     setTitleError(false);
     const pending = newTagText.trim();
     const finalTags = pending && !tags.includes(pending) ? [...tags, pending] : tags;
-    onSubmit({ title: title.trim(), details: details.trim(), due: due || null, tags: finalTags, important });
+    const payload = { title: title.trim(), details: details.trim(), due: due || null, tags: finalTags, important };
+    if (selectedTopicId) payload.topicId = selectedTopicId;
+    onSubmit(payload);
   };
 
   return (
@@ -825,6 +849,34 @@ function TaskForm({ tagColors, initial, onCancel, onSubmit }) {
         </button>
       </div>
       <TextInput value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Details (optional)" style={{ border: "none", borderBottom: `1px solid ${C.border}`, borderRadius: 0, padding: "0 0 8px 0" }} />
+      {safeSections.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Section</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {safeSections.map((s) => (
+              <button key={s.id} onClick={() => chooseSection(s.id)} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${selectedSectionId === s.id ? C.gold : C.border}`, background: selectedSectionId === s.id ? C.gold : "none", color: selectedSectionId === s.id ? C.bg : C.muted }}>
+                {s.name}
+              </button>
+            ))}
+          </div>
+          {selectedSectionId && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Topic</div>
+              {topicsInSection.length === 0 ? (
+                <div style={{ fontSize: 12, color: C.faint, fontStyle: "italic" }}>No topics in this section yet.</div>
+              ) : (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {topicsInSection.map((t) => (
+                    <button key={t.id} onClick={() => setSelectedTopicId(t.id)} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 999, border: `1px solid ${selectedTopicId === t.id ? C.blue : C.border}`, background: selectedTopicId === t.id ? C.blue : "none", color: selectedTopicId === t.id ? C.bg : C.muted }}>
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div>
         <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Deadline</div>
         <DateField value={due} onChange={setDue} placeholder="No deadline set" />
@@ -3285,7 +3337,7 @@ function FitnessPage() {
             )}
           </div>
         ) : (
-          <div style={{ fontSize: 12, color: C.green }}>Target met for today \u2014 nice work.</div>
+          <div style={{ fontSize: 12, color: C.green }}>Target met for today — nice work.</div>
         )}
       </Card>
     </div>
@@ -3341,7 +3393,7 @@ function ExerciseForm({ tagColors, initial, onCancel, onSubmit }) {
           <TextInput type="number" value={calories} onChange={(e) => setCalories(e.target.value)} placeholder="e.g. 150" />
         </div>
       </div>
-      <div style={{ fontSize: 10, color: C.faint, marginTop: -4 }}>Duration can't be auto-filled from a video link \u2014 YouTube's public info doesn't include it.</div>
+      <div style={{ fontSize: 10, color: C.faint, marginTop: -4 }}>Duration can't be auto-filled from a video link — YouTube's public info doesn't include it.</div>
       <div style={{ display: "flex", gap: 20 }}>
         <div>
           <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Effectiveness</div>
@@ -3732,7 +3784,7 @@ function ItemForm({ tagColors, initial, onCancel, onSubmit }) {
           <TextInput type="number" value={expectedDuration} onChange={(e) => setExpectedDuration(e.target.value)} placeholder="Optional" />
         </div>
       </div>
-      <div style={{ fontSize: 10, color: C.faint, marginTop: -4 }}>Expected duration is only used as an estimate until you've finished at least one unit \u2014 after that, actual history takes over.</div>
+      <div style={{ fontSize: 10, color: C.faint, marginTop: -4 }}>Expected duration is only used as an estimate until you've finished at least one unit — after that, actual history takes over.</div>
       <div>
         <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Category</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -3833,7 +3885,7 @@ function Project50Page() {
       {showMissBanner && (
         <Card style={{ border: `1px solid ${C.red}` }}>
           <div style={{ fontSize: 13, color: C.textDim, lineHeight: 1.5, marginBottom: 10 }}>
-            Day {firstMissedIndex + 1} ({fmtDate(dayDate(firstMissedIndex))}) wasn't fully checked off \u2014 restart from Day 1?
+            Day {firstMissedIndex + 1} ({fmtDate(dayDate(firstMissedIndex))}) wasn't fully checked off — restart from Day 1?
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={restart} style={{ fontSize: 12, color: "#fff", background: C.red, border: "none", borderRadius: 999, padding: "8px 16px", fontWeight: 600 }}>Restart</button>
@@ -3889,7 +3941,7 @@ function Project50Page() {
 
         {viewedComplete && (
           <div style={{ marginTop: 14, fontSize: 12, color: C.green, textAlign: "center", fontWeight: 500 }}>
-            Day {viewIndex + 1} complete \u2014 nice work.
+            Day {viewIndex + 1} complete — nice work.
           </div>
         )}
       </Card>
@@ -4082,8 +4134,13 @@ function TradingPage() {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
           {calGrid.map((c, i) => (
-            <button key={i} disabled={!c} onClick={() => c && openForm(c.iso)} style={{ aspectRatio: "1", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "none", background: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.bg : c.pnl > 0 ? "rgba(127,176,105,0.2)" : "rgba(193,85,77,0.2)", color: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.faint : c.pnl > 0 ? C.green : C.red }}>
-              {c && c.day}
+            <button key={i} disabled={!c} onClick={() => c && openForm(c.iso)} style={{ aspectRatio: "1", borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, padding: 0, fontSize: 10, border: "none", background: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.bg : c.pnl > 0 ? "rgba(127,176,105,0.2)" : "rgba(193,85,77,0.2)", color: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.faint : c.pnl > 0 ? C.green : C.red }}>
+              <span>{c && c.day}</span>
+              {c && c.pnl !== undefined && c.pnl !== null && (
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, lineHeight: 1, letterSpacing: "-0.03em" }}>
+                  {Math.abs(c.pnl) >= 1000 ? `${(c.pnl / 1000).toFixed(1)}k` : String(Math.round(c.pnl))}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -4417,7 +4474,7 @@ function KellySection() {
             <div style={{ fontSize: 12, color: C.faint, textAlign: "center", padding: "8px 0" }}>Enter both values to calculate.</div>
           ) : f <= 0 ? (
             <div style={{ fontSize: 12, color: C.red, textAlign: "center", padding: "8px 0", lineHeight: 1.5 }}>
-              Negative edge at these numbers \u2014 the math doesn't favor a position here. Recommended size: 0%.
+              Negative edge at these numbers — the math doesn't favor a position here. Recommended size: 0%.
             </div>
           ) : (
             <div>
@@ -4436,7 +4493,7 @@ function KellySection() {
                 </div>
               </div>
               <div style={{ fontSize: 10, color: C.faint, marginTop: 14, lineHeight: 1.5 }}>
-                Full Kelly is mathematically optimal but volatile in practice \u2014 many traders use half or quarter Kelly for a smoother ride. This assumes your win rate and reward:risk stay consistent, which real markets don't guarantee.
+                Full Kelly is mathematically optimal but volatile in practice — many traders use half or quarter Kelly for a smoother ride. This assumes your win rate and reward:risk stay consistent, which real markets don't guarantee.
               </div>
             </div>
           )}
@@ -4505,7 +4562,7 @@ function SessionTimeline() {
       <SectionLabel>Trading Sessions</SectionLabel>
       <div style={{ textAlign: "center", margin: "12px 0 16px" }}>
         {marketClosed ? (
-          <div style={{ fontSize: 15, color: C.faint, fontWeight: 500 }}>Market closed \u2014 weekend</div>
+          <div style={{ fontSize: 15, color: C.faint, fontWeight: 500 }}>Market closed — weekend</div>
         ) : (
           <div style={{ fontSize: 15, color: C.gold, fontWeight: 600 }}>
             {activeSessions.map((s) => s.label).join(" + ")} {activeSessions.length > 1 ? "(overlap)" : "session"}
@@ -4535,7 +4592,7 @@ function SessionTimeline() {
         </div>
       </div>
       <div style={{ fontSize: 10, color: C.faint, marginTop: 14, lineHeight: 1.5 }}>
-        Session hours use standard fixed UTC windows (Sydney 22\u201307, Tokyo 00\u201309, London 08\u201317, New York 13\u201322 UTC) \u2014 the common simplification most session clocks use, not adjusted for each city's own daylight saving.
+        Session hours use standard fixed UTC windows (Sydney 22–07, Tokyo 00–09, London 08–17, New York 13–22 UTC) — the common simplification most session clocks use, not adjusted for each city's own daylight saving.
       </div>
     </Card>
   );
@@ -4718,7 +4775,7 @@ function SettingsPage({ tabs, hiddenTabs, toggleTabHidden, reorderTab, onBack })
                 display: "flex", alignItems: "center", gap: 10, padding: "10px 0",
                 position: "relative", background: isDragging ? C.panel : "transparent",
                 transform: isDragging ? `translateY(${dragY}px)` : "none",
-                zIndex: isDragging ? 5 : 1, boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
+                zIndex: isDragging ? 5 : "auto", boxShadow: isDragging ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
                 borderRadius: isDragging ? 8 : 0,
               }}>
                 <div onPointerDown={(e) => onHandlePointerDown(e, t.id, idx)} style={{ color: C.faint, cursor: "grab", touchAction: "none", display: "flex" }}>
@@ -4854,7 +4911,7 @@ function App() {
         )}
       </div>
       {!showSettings && (
-        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(11,13,16,0.95)", backdropFilter: "blur(8px)", borderTop: `1px solid ${C.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30, background: "rgba(11,13,16,0.95)", backdropFilter: "blur(8px)", borderTop: `1px solid ${C.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
           <div style={{ maxWidth: 448, margin: "0 auto", display: "flex" }}>
             {visibleTabs.map((t) => {
               const active = tab === t.id;
