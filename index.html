@@ -4535,11 +4535,31 @@ function TradingViewWidget({ src, config, height = 400 }) {
 }
 
 const FOREX_SESSIONS = [
-  { id: "sydney", label: "Sydney", color: "#9B8AC4", utcStart: 22, utcEnd: 7 },
-  { id: "tokyo", label: "Tokyo", color: "#D98CB3", utcStart: 0, utcEnd: 9 },
-  { id: "london", label: "London", color: "#6FA8C9", utcStart: 8, utcEnd: 17 },
-  { id: "newyork", label: "New York", color: "#7FB069", utcStart: 13, utcEnd: 22 },
+  { id: "sydney", label: "Sydney", color: "#9B8AC4", tz: "Australia/Sydney", localStart: 8, localEnd: 17, utcStart: 22, utcEnd: 7 },
+  { id: "tokyo", label: "Tokyo", color: "#D98CB3", tz: "Asia/Tokyo", localStart: 9, localEnd: 18, utcStart: 0, utcEnd: 9 },
+  { id: "london", label: "London", color: "#6FA8C9", tz: "Europe/London", localStart: 8, localEnd: 17, utcStart: 8, utcEnd: 17 },
+  { id: "newyork", label: "New York", color: "#7FB069", tz: "America/New_York", localStart: 8, localEnd: 17, utcStart: 13, utcEnd: 22 },
 ];
+
+// Offset (hours from UTC) of a time zone at a given moment; follows daylight saving automatically.
+function tzOffsetHours(tz, date) {
+  const f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const p = {};
+  f.formatToParts(date).forEach((x) => { p[x.type] = x.value; });
+  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return Math.round(((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 3600000) * 2) / 2;
+}
+
+// Sessions with UTC windows computed for the current date (DST-aware); falls back to fixed UTC hours.
+function resolveSessions(date) {
+  return FOREX_SESSIONS.map((s) => {
+    try {
+      const off = tzOffsetHours(s.tz, date);
+      const m = (h) => ((h - off) % 24 + 24) % 24;
+      return { ...s, utcStart: m(s.localStart), utcEnd: m(s.localEnd) };
+    } catch (e) { return s; }
+  });
+}
 
 function sessionActiveAtUtc(s, utcHour) {
   if (s.utcEnd > s.utcStart) return utcHour >= s.utcStart && utcHour < s.utcEnd;
@@ -4569,7 +4589,8 @@ function SessionTimeline() {
   const utcDay = now.getUTCDay();
   const marketClosed = utcDay === 6 || (utcDay === 0 && utcHour < 22) || (utcDay === 5 && utcHour >= 22);
 
-  const activeSessions = FOREX_SESSIONS.filter((s) => sessionActiveAtUtc(s, utcHour));
+  const sessions = resolveSessions(now);
+  const activeSessions = sessions.filter((s) => sessionActiveAtUtc(s, utcHour));
   const tzLabel = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   return (
@@ -4587,7 +4608,7 @@ function SessionTimeline() {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {FOREX_SESSIONS.map((s) => {
+        {sessions.map((s) => {
           const intervals = sessionLocalIntervals(s, offsetHours);
           const isActive = activeSessions.some((a) => a.id === s.id);
           return (
@@ -4608,6 +4629,135 @@ function SessionTimeline() {
       </div>
       <div style={{ fontSize: 10, color: C.faint, marginTop: 14, lineHeight: 1.5 }}>
         Session hours use standard fixed UTC windows (Sydney 22–07, Tokyo 00–09, London 08–17, New York 13–22 UTC) — the common simplification most session clocks use, not adjusted for each city's own daylight saving.
+      </div>
+    </Card>
+  );
+}
+
+// ============ NEWS CALENDAR (high-impact USD) ============
+// Dates from official BLS / BEA / Federal Reserve schedules (US Eastern dates). 2027 Fed dates are tentative.
+const NEWS_TYPES = {
+  fomc: { label: "FOMC rate decision", short: "FOMC", color: "#C1554D", etTime: "14:00" },
+  nfp: { label: "Non-Farm Payrolls (jobs report)", short: "NFP", color: "#6FA8C9", etTime: "08:30" },
+  cpi: { label: "CPI inflation", short: "CPI", color: "#E0A458", etTime: "08:30" },
+  pce: { label: "PCE inflation (Fed's favourite)", short: "PCE", color: "#9B8AC4", etTime: "08:30" },
+  gdp: { label: "GDP (advance estimate)", short: "GDP", color: "#7FB069", etTime: "08:30" },
+};
+const NEWS_DATES = {
+  fomc: { 2026: ["01-28", "03-18", "04-29", "06-17", "07-29", "09-16", "10-28", "12-09"], 2027: ["01-27", "03-17", "04-28", "06-09", "07-28", "09-15", "10-27", "12-08"] },
+  nfp: { 2026: ["01-09", "02-11", "03-06", "04-03", "05-08", "06-05", "07-02", "08-07", "09-04", "10-02", "11-06", "12-04"], 2027: ["01-08", "02-05", "03-05", "04-02", "05-07", "06-04", "07-02", "08-06", "09-03", "10-08", "11-05", "12-03"] },
+  cpi: { 2026: ["01-13", "02-13", "03-11", "04-10", "05-12", "06-10", "07-14", "08-12", "09-11", "10-14", "11-10", "12-10"], 2027: ["01-13", "02-11", "03-10", "04-13", "05-12", "06-10", "07-14", "08-11", "09-14", "10-14", "11-10", "12-10"] },
+  pce: { 2026: ["01-22", "02-20", "03-13", "04-09", "04-30", "05-28", "06-25", "07-30", "08-26", "09-30", "10-29", "11-25", "12-23"], 2027: ["01-28", "02-25", "03-31", "04-29", "05-27", "06-25", "07-29", "08-25", "09-30", "10-28", "11-24", "12-22"] },
+  gdp: { 2026: ["02-20", "04-30", "07-30", "10-29"], 2027: ["01-28", "04-29", "07-29", "10-28"] },
+};
+
+function buildNewsByLocalDate() {
+  const out = {};
+  Object.keys(NEWS_DATES).forEach((type) => {
+    const [hh, mm] = NEWS_TYPES[type].etTime.split(":").map(Number);
+    Object.keys(NEWS_DATES[type]).forEach((yr) => {
+      NEWS_DATES[type][yr].forEach((md) => {
+        const [mo, da] = md.split("-").map(Number);
+        let off = -5;
+        try { off = tzOffsetHours("America/New_York", new Date(Date.UTC(+yr, mo - 1, da, 12))); } catch (e) {}
+        const when = new Date(Date.UTC(+yr, mo - 1, da, hh, mm) - off * 3600000);
+        const key = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`;
+        (out[key] = out[key] || []).push({ type, when, etDate: `${yr}-${md}` });
+      });
+    });
+  });
+  Object.keys(out).forEach((k) => out[k].sort((a, b) => a.when - b.when));
+  return out;
+}
+
+function NewsCalendar() {
+  const newsByDate = useMemo(() => buildNewsByLocalDate(), []);
+  const todayD = new Date();
+  const todayISO = `${todayD.getFullYear()}-${String(todayD.getMonth() + 1).padStart(2, "0")}-${String(todayD.getDate()).padStart(2, "0")}`;
+  const [month, setMonth] = useState(new Date(todayD.getFullYear(), todayD.getMonth(), 1));
+  const [selected, setSelected] = useState(todayISO);
+
+  const y = month.getFullYear(), m = month.getMonth();
+  const startOffset = new Date(y, m, 1).getDay();
+  const total = new Date(y, m + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) cells.push(null);
+  for (let d = 1; d <= total; d++) cells.push(d);
+
+  const fmtTime = (dt) => dt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const todayNews = newsByDate[todayISO] || [];
+  const selNews = newsByDate[selected] || [];
+  const outOfRange = y < 2026 || y > 2027;
+  const selLabel = new Date(selected + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
+
+  return (
+    <Card>
+      <SectionLabel>News Calendar</SectionLabel>
+      <div style={{ textAlign: "center", margin: "12px 0 14px" }}>
+        {todayNews.length > 0 ? (
+          <div style={{ fontSize: 15, color: C.gold, fontWeight: 600 }}>
+            News today: {todayNews.map((e) => `${NEWS_TYPES[e.type].short} ${fmtTime(e.when)}`).join(" · ")}
+          </div>
+        ) : (
+          <div style={{ fontSize: 15, color: C.faint, fontWeight: 500 }}>No high-impact USD news today</div>
+        )}
+        <div style={{ fontSize: 11, color: C.faint, marginTop: 4 }}>High-impact USD only · times in your time</div>
+      </div>
+
+      <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <button onClick={() => setMonth(new Date(y, m - 1, 1))} style={iconBtnStyle}><Icon name="chevron-left" size={16} /></button>
+          <button onClick={() => { setMonth(new Date(todayD.getFullYear(), todayD.getMonth(), 1)); setSelected(todayISO); }} style={{ background: "none", border: "none", fontSize: 13, color: C.text, fontWeight: 500 }}>
+            {month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+          </button>
+          <button onClick={() => setMonth(new Date(y, m + 1, 1))} style={iconBtnStyle}><Icon name="chevron-right" size={16} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, fontSize: 10, color: C.faint, textAlign: "center", marginBottom: 4 }}>
+          {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <div key={i}>{d}</div>)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+          {cells.map((d, i) => {
+            if (!d) return <div key={i} />;
+            const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+            const evs = newsByDate[iso] || [];
+            const isSel = iso === selected;
+            const isToday = iso === todayISO;
+            return (
+              <button key={i} onClick={() => setSelected(iso)} style={{ aspectRatio: "1", borderRadius: 8, fontSize: 12, border: isToday && !isSel ? `1px solid ${C.gold}` : "1px solid transparent", background: isSel ? C.gold : "transparent", color: isSel ? C.bg : C.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, padding: 0 }}>
+                <span>{d}</span>
+                <div style={{ display: "flex", gap: 2, height: 4 }}>
+                  {evs.slice(0, 3).map((e, idx) => <div key={idx} style={{ width: 4, height: 4, borderRadius: 999, background: NEWS_TYPES[e.type].color }} />)}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {outOfRange && <div style={{ fontSize: 11, color: C.faint, marginTop: 10, textAlign: "center" }}>No schedule loaded for this year (covers 2026–2027).</div>}
+
+      <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>{selLabel}</div>
+        {selNews.length === 0 ? (
+          <div style={{ fontSize: 12, color: C.faint }}>No high-impact USD news</div>
+        ) : selNews.map((e, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
+            <div style={{ width: 8, height: 8, borderRadius: 999, background: NEWS_TYPES[e.type].color, flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 13, color: C.text }}>{NEWS_TYPES[e.type].label}</div>
+            <div style={{ fontSize: 12, color: C.gold, fontFamily: "'JetBrains Mono', monospace" }}>{fmtTime(e.when)}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 12px", marginTop: 12 }}>
+        {Object.keys(NEWS_TYPES).map((k) => (
+          <div key={k} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: C.muted }}>
+            <div style={{ width: 6, height: 6, borderRadius: 999, background: NEWS_TYPES[k].color }} />{NEWS_TYPES[k].short}
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 10, color: C.faint, marginTop: 8, lineHeight: 1.4 }}>
+        From official BLS, BEA and Federal Reserve schedules (2027 Fed dates tentative). Dates can shift, and Fed speeches or surprise events aren't included. Check a forex news site for exact times.
       </div>
     </Card>
   );
@@ -4655,6 +4805,8 @@ function TrendPage() {
       </Card>
 
       <SessionTimeline />
+
+      <NewsCalendar />
 
       <Card style={{ padding: 8 }}>
         <SectionLabel>Chart Pattern Cheat Sheet</SectionLabel>
