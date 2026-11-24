@@ -4804,6 +4804,33 @@ function TrendPage() {
         />
       </Card>
 
+      <Card style={{ padding: 12 }}>
+        <SectionLabel>Last 5 Days · 15m</SectionLabel>
+        <div style={{ fontSize: 11, color: C.faint, margin: "2px 0 8px" }}>Drag sideways to look back. Pinch to zoom.</div>
+        <TradingViewWidget
+          src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js"
+          height={460}
+          config={{
+            autosize: true,
+            symbol: "OANDA:XAUUSD",
+            interval: "15",
+            range: "5D",
+            timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "Etc/UTC"; } catch (e) { return "Etc/UTC"; } })(),
+            theme: "dark",
+            style: "1",
+            locale: "en",
+            backgroundColor: "rgba(0, 0, 0, 0)",
+            hide_side_toolbar: true,
+            hide_top_toolbar: false,
+            hide_legend: false,
+            allow_symbol_change: false,
+            save_image: false,
+            withdateranges: false,
+            calendar: false,
+          }}
+        />
+      </Card>
+
       <SessionTimeline />
 
       <NewsCalendar />
