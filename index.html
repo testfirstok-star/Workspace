@@ -152,7 +152,7 @@ function CalendarPicker({ month, onMonthChange, selected, onSelect }) {
           const isToday = iso === todayISO();
           return (
             <button key={i} onClick={() => onSelect(iso)} style={{
-              aspectRatio: "1", borderRadius: 8, fontSize: 12, border: isToday && !isSel ? `1px solid ${C.gold}` : "none",
+              aspectRatio: "1", borderRadius: 8, fontSize: 12, border: "none", boxShadow: isToday ? "inset 0 0 0 2px #FFFFFF" : "none",
               background: isSel ? C.gold : "transparent", color: isSel ? C.bg : isToday ? C.gold : C.text,
               fontWeight: isToday ? 700 : 400,
             }}>
@@ -2056,7 +2056,7 @@ function CountdownCalendarGrid({ month, onMonthChange, items, entries, tagColors
           const rangeSpan = fromEntries.find((e) => e.endDate && e.endDate !== e.date);
           const tint = rangeSpan ? `${tagColorFor(rangeSpan.tag, tagColors)}30` : "transparent";
           return (
-            <button key={i} onClick={() => onSelectDate(iso)} style={{ aspectRatio: "1", borderRadius: 8, fontSize: 12, border: "none", background: isSel ? C.gold : tint, color: isSel ? C.bg : C.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, padding: 2 }}>
+            <button key={i} onClick={() => onSelectDate(iso)} style={{ aspectRatio: "1", borderRadius: 8, fontSize: 12, border: "none", boxShadow: iso === todayISO() ? "inset 0 0 0 2px #FFFFFF" : "none", background: isSel ? C.gold : tint, color: isSel ? C.bg : C.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, padding: 2 }}>
               <span>{d}</span>
               {dayItems.length > 0 && (
                 <div style={{ display: "flex", gap: 2 }}>
@@ -4149,7 +4149,7 @@ function TradingPage() {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
           {calGrid.map((c, i) => (
-            <button key={i} disabled={!c} onClick={() => c && openForm(c.iso)} style={{ aspectRatio: "1", borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, padding: 0, fontSize: 10, border: "none", background: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.bg : c.pnl > 0 ? "rgba(127,176,105,0.2)" : "rgba(193,85,77,0.2)", color: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.faint : c.pnl > 0 ? C.green : C.red }}>
+            <button key={i} disabled={!c} onClick={() => c && openForm(c.iso)} style={{ aspectRatio: "1", borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, padding: 0, fontSize: 10, border: "none", boxShadow: c && c.iso === todayISO() ? "inset 0 0 0 2px #FFFFFF" : "none", background: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.bg : c.pnl > 0 ? "rgba(127,176,105,0.2)" : "rgba(193,85,77,0.2)", color: !c ? "transparent" : (c.pnl === undefined || c.pnl === 0) ? C.faint : c.pnl > 0 ? C.green : C.red }}>
               <span>{c && c.day}</span>
               {c && c.pnl !== undefined && c.pnl !== null && (
                 <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, lineHeight: 1, letterSpacing: "-0.03em" }}>
@@ -4723,7 +4723,7 @@ function NewsCalendar() {
             const isSel = iso === selected;
             const isToday = iso === todayISO;
             return (
-              <button key={i} onClick={() => setSelected(iso)} style={{ aspectRatio: "1", borderRadius: 8, fontSize: 12, border: isToday && !isSel ? `1px solid ${C.gold}` : "1px solid transparent", background: isSel ? C.gold : "transparent", color: isSel ? C.bg : C.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, padding: 0 }}>
+              <button key={i} onClick={() => setSelected(iso)} style={{ aspectRatio: "1", borderRadius: 8, fontSize: 12, border: "none", boxShadow: isToday ? "inset 0 0 0 2px #FFFFFF" : "none", background: isSel ? C.gold : "transparent", color: isSel ? C.bg : C.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, padding: 0 }}>
                 <span>{d}</span>
                 <div style={{ display: "flex", gap: 2, height: 4 }}>
                   {evs.slice(0, 3).map((e, idx) => <div key={idx} style={{ width: 4, height: 4, borderRadius: 999, background: NEWS_TYPES[e.type].color }} />)}
